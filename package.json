@@ -17,9 +17,10 @@
   "private": "true",
   "scripts": {
     "build": "spago build",
+    "lint": "eslint .",
     "postinstall": "spago install",
     "server:start": "ts-node test/ts/test-server.ts",
-    "server:stop": "kill $(ps -e | grep 'ts-node test/ts/test-server.ts' | grep -v grep | cut -d ' ' -f 1)",
+    "server:stop": "kill $(ps -e | grep 'ts-node test/ts/test-server.ts' | grep -v grep | xargs | cut -d ' ' -f 1)",
     "test": "spago test"
   }
 }

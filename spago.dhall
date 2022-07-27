@@ -7,6 +7,7 @@
   , "effect"
   , "foreign-object"
   , "functions"
+  , "lists"
   , "maybe"
   , "monad-loops"
   , "node-buffer"

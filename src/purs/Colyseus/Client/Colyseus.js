@@ -4,23 +4,15 @@ export function makeClientImpl({ endpoint }) {
   return new Colyseus.Client(endpoint)
 }
 
-export function joinOrCreateImpl(client, { roomName }) {
+export function getAvailableRoomsImpl(client, { roomName }) {
   return async function() {
-    return client.joinOrCreate(roomName)
+    return client.getAvailableRooms(roomName)
   }
 }
 
-export function getStateImpl(room) {
-  return function() {
-    return new Promise(resolve => {
-      room.onStateChange.once((state) => {
-        resolve(state)
-      })
-    })
+export function joinOrCreateImpl(client, { options, roomName }) {
+  return async function() {
+    return client.joinOrCreate(roomName, options)
   }
-}
-
-export function getSessionIdImpl(room) {
-  return room.sessionId
 }
 
