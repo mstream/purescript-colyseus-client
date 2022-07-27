@@ -5,6 +5,7 @@
   , "console"
   , "datetime"
   , "effect"
+  , "exceptions"
   , "foreign-object"
   , "functions"
   , "lists"
