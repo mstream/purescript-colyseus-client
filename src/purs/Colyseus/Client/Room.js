@@ -1,3 +1,9 @@
+export function addMessageListenerImpl(room, messageName, listener) {
+  return async function() {
+    room.onMessage(messageName, msg => listener(msg)())
+  }
+}
+
 export function getIdImpl(room) {
   return room.id
 }

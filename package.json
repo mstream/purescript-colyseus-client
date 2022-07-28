@@ -10,6 +10,8 @@
     "@types/cors": "^2",
     "colyseus": "~0.14",
     "cors": "^2",
+    "esbuild": "~0.14",
+    "tailwindcss": "^3",
     "ts-node": "^10"
   },
   "license": "MIT",
@@ -17,6 +19,9 @@
   "private": "true",
   "scripts": {
     "build": "spago build",
+    "example:chat:build": "cd examples/chat && spago build",
+    "example:chat:css": "cd examples/chat && tailwindcss --config tailwind.config.cjs --input src/css/styles.css --output static/index.generated.css",
+    "example:chat:serve": "npm run example:chat:build && npm run example:chat:css && cd examples/chat && esbuild --bundle --outfile=static/index.js --servedir=static src/js/index.js",
     "lint": "eslint .",
     "postinstall": "spago install",
     "server:start": "ts-node test/ts/test-server.ts",
