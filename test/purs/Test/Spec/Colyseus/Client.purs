@@ -13,7 +13,7 @@ import Data.Time.Duration (Milliseconds(..))
 import Data.Tuple.Nested ((/\))
 import Effect.Aff (Aff, delay)
 import Effect.Class (liftEffect)
-import Effect.Class.Console (infoShow)
+import Effect.Class.Console (info)
 import Effect.Exception (error)
 import Effect.Ref as Ref
 import Foreign.Object as Object
@@ -84,7 +84,8 @@ spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
     it "can add a message listener" do
       let
         roomName = "test3"
-        options = defaultOptions
+        options = A.fromObject $ Object.fromFoldable
+          [ "pingEnabled" /\ A.fromBoolean true ]
 
       messageRef ← liftEffect $ Ref.new Nothing
       room ← joinOrCreate client1 { options, roomName }
@@ -94,6 +95,7 @@ spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
 
       delay $ Milliseconds 2000.0
       mbMessage ← liftEffect $ Ref.read messageRef
+
       (A.stringify <$> mbMessage) `shouldEqual`
         (Just $ A.stringify $ A.fromString "ping")
 
@@ -109,6 +111,32 @@ spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
         ( A.stringify $ A.fromObject $ Object.fromFoldable
             [ "number" /\ A.fromNumber 0.0
             , "string" /\ A.fromString ""
+            , "messages" /\ A.jsonEmptyArray
             ]
         )
 
+    it "can send a message" do
+      let
+        roomName = "test5"
+        options = defaultOptions
+
+      stateRef ← liftEffect $ Ref.new Nothing
+
+      room ← joinOrCreate client1 { options, roomName }
+
+      Room.addStateChangeListener room \state →
+        Ref.write (Just state) stateRef
+
+      Room.send room "test" $ A.fromString "message1"
+
+      delay $ Milliseconds 200.0
+
+      mbState ← liftEffect $ Ref.read stateRef
+
+      (A.stringify <$> mbState) `shouldEqual`
+        ( Just $ A.stringify $ A.fromObject $ Object.fromFoldable
+            [ "number" /\ A.fromNumber 0.0
+            , "string" /\ A.fromString ""
+            , "messages" /\ A.fromArray [ A.fromString "message1" ]
+            ]
+        )

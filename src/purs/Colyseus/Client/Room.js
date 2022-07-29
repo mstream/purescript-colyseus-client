@@ -4,6 +4,12 @@ export function addMessageListenerImpl(room, messageName, listener) {
   }
 }
 
+export function addStateChangeListenerImpl(room, listener) {
+  return async function() {
+    room.onStateChange(state => listener(state)())
+  }
+}
+
 export function getIdImpl(room) {
   return room.id
 }
@@ -29,5 +35,11 @@ export function requestStateImpl(room) {
         resolve(state)
       })
     })
+  }
+}
+
+export function sendImpl(room, messageName, message) {
+  return async function() {
+    return room.send(messageName, message)
   }
 }

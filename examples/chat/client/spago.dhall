@@ -14,7 +14,7 @@
   , "transformers"
   ]
 , packages =
-    ../../packages.dhall
-  with colyseus-client = ../../spago.dhall as Location
+    ../../../packages.dhall
+  with colyseus-client = ../../../spago.dhall as Location
 , sources = [ "src/purs/**/*.purs" ]
 }
