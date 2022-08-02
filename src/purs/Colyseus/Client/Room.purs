@@ -12,19 +12,20 @@ module Colyseus.Client.Room
 
 import Prelude
 
+import Colyseus.Schema (Schema)
 import Control.Promise (Promise, toAffE)
 import Data.Argonaut.Core (Json)
 import Data.Function.Uncurried (Fn1, Fn2, Fn3, runFn1, runFn2, runFn3)
 import Effect (Effect)
 import Effect.Aff (Aff)
 
-type State = Json
+type State = Schema
 
 addMessageListener ∷ Room → String → (Json → Effect Unit) → Aff Unit
 addMessageListener room messageName listener =
   toAffE $ runFn3 addMessageListenerImpl room messageName listener
 
-addStateChangeListener ∷ Room → (Json → Effect Unit) → Aff Unit
+addStateChangeListener ∷ Room → (State → Effect Unit) → Aff Unit
 addStateChangeListener room listener =
   toAffE $ runFn2 addStateChangeListenerImpl room listener
 
@@ -59,7 +60,7 @@ foreign import addMessageListenerImpl
 foreign import addStateChangeListenerImpl
   ∷ Fn2
       Room
-      (Json → Effect Unit)
+      (State → Effect Unit)
       (Effect (Promise Unit))
 
 foreign import getIdImpl
