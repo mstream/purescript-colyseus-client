@@ -1,4 +1,4 @@
-import { ArraySchema, Schema, type } from "@colyseus/schema";
+import { ArraySchema, MapSchema, Schema, type } from "@colyseus/schema";
 
 export class Message extends Schema {
   @type('string') author = ""
@@ -12,6 +12,16 @@ export class Message extends Schema {
   }
 }
 
+export class User extends Schema {
+  @type('string') name: string = null
+  
+  constructor({name}: {name: string}) {
+    super()
+    this.name = name
+  }
+}
+
 export class ChatRoomState extends Schema {
   @type([Message]) messages = new ArraySchema<Message>()
+  @type({map: User}) users = new MapSchema<User>()
 }

@@ -1,6 +1,6 @@
 import { Room, Client } from "colyseus";
 import { Dispatcher } from "@colyseus/command";
-import { ChatRoomState, Message } from "./schema/ChatRoomState";
+import { ChatRoomState, Message, User } from "./schema/ChatRoomState";
 
 export class ChatRoom extends Room<ChatRoomState> {
 
@@ -17,7 +17,7 @@ export class ChatRoom extends Room<ChatRoomState> {
   }
 
   onJoin (client: Client, options: any) {
-    console.log(client.sessionId, 'joined!')
+    this.state.users.set(client.sessionId, new User({name: client.sessionId}))
   }
 
   onLeave (client: Client, consented: boolean) {
