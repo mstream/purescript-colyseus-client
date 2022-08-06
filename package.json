@@ -16,7 +16,7 @@
     "example:chat:client:bundle": "npm run example:chat:client:esbuild -- --minify && npm run example:chat:client:build && npm run example:chat:client:css",
     "example:chat:client:css": "cd examples/chat/client && tailwindcss --config tailwind.config.cjs --input src/css/styles.css --output static/index.generated.css",
     "example:chat:client:esbuild": "cd examples/chat/client && esbuild --bundle --outfile=static/index.generated.js src/js/index.js",
-    "example:chat:client:serve": "npm run example:chat:client:esbuild -- --servedir=static && npm run example:chat:client:build && npm run example:chat:client:css ",
+    "example:chat:client:serve": "npm run example:chat:client:css && npm run example:chat:client:esbuild -- --servedir=static && npm run example:chat:client:build && npm run example:chat:client:css ",
     "example:chat:server:build": "cd examples/chat/server && npm run build",
     "example:chat:server:start": "cd examples/chat/server && npm start",
     "lint": "eslint .",

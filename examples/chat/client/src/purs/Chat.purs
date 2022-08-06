@@ -21,13 +21,16 @@ import Data.Array as Array
 import Data.DateTime.Instant (Instant, instant, unInstant)
 import Data.Either (Either(..))
 import Data.Foldable (foldMap)
+import Data.FunctorWithIndex (mapWithIndex)
 import Data.Int as Int
-import Data.List (List(..))
+import Data.List (List(..), (:))
 import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), maybe)
 import Data.Time.Duration (Milliseconds(..))
+import Data.Tuple.Nested ((/\))
+import Data.Unfoldable (unfoldr)
 import Effect.Aff (Aff, delay, forkAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
@@ -53,12 +56,20 @@ import Web.UIEvent.KeyboardEvent.EventTypes as KET
 type State =
   { draft ∷ String
   , messages ∷ List Message
+  , notifications ∷ List Notification
   , now ∷ Maybe Instant
-  , room ∷ Maybe Room
+  , session ∷ Maybe SessionState
   , users ∷ Map String User
   }
 
-type ChatRoomState = { messages ∷ Array Message, users ∷ Object User }
+type SessionState =
+  { id ∷ String, room ∷ Room }
+
+type ChatRoomState =
+  { messages ∷ Array Message
+  , notifications ∷ Array Notification
+  , users ∷ Object User
+  }
 
 newtype User = User { name ∷ String }
 
@@ -79,9 +90,20 @@ instance DecodeJson Message where
     timestamp ← obj .: "timestamp"
     pure $ Message { author, text, timestamp }
 
+newtype Notification =
+  Notification { text ∷ String, timestamp ∷ Timestamp }
+
+instance DecodeJson Notification where
+  decodeJson json = do
+    obj ← AD.decodeJson json
+    text ← obj .: "text"
+    timestamp ← obj .: "timestamp"
+    pure $ Notification { text, timestamp }
+
 newtype Timestamp = Timestamp Instant
 
 derive newtype instance Show Timestamp
+derive newtype instance Ord Timestamp
 
 instance DecodeJson Timestamp where
   decodeJson json = do
@@ -132,8 +154,9 @@ initialState ∷ ∀ i. i → State
 initialState _ =
   { draft: ""
   , messages: Nil
+  , notifications: Nil
   , now: Nothing
-  , room: Nothing
+  , session: Nothing
   , users: Map.empty
   }
 
@@ -150,9 +173,11 @@ render state = HH.div
               case state.now of
                 Just now →
                   Array.fromFoldable $
-                    HH.fromPlainHTML <<< renderMessage now
-                      <$>
+                    HH.fromPlainHTML
+                      <$> renderMessagesAndNotifications
+                        now
                         state.messages
+                        state.notifications
                 Nothing → [ HH.text "" ]
           , HH.div
               [ classes [ Just "border" ] ]
@@ -165,12 +190,62 @@ render state = HH.div
           [ HH.h2_ [ HH.text "Users" ]
           , HH.div
               [ classes [ Just "flex", Just "flex-col" ] ]
-              ( Array.fromFoldable $ HH.fromPlainHTML <<< renderUser <$>
-                  state.users
-              )
+              case state.session of
+                Just session →
+                  Array.fromFoldable $ HH.fromPlainHTML
+                    <$> renderUsers
+                      session.id
+                      state.users
+                Nothing → [ HH.text "" ]
           ]
       ]
   ]
+
+renderUsers ∷ String → Map String User → List PlainHTML
+renderUsers sessionId users =
+  Map.values $ renderUser sessionId `mapWithIndex` users
+
+renderUser ∷ String → String → User → PlainHTML
+renderUser currentSessionId sessionId (User { name }) =
+  HH.div
+    [ classes
+        [ if sessionId == currentSessionId then Just "font-semibold"
+          else Nothing
+        ]
+    ]
+    [ HH.text name ]
+
+renderMessagesAndNotifications
+  ∷ Instant → List Message → List Notification → List PlainHTML
+renderMessagesAndNotifications now messages notifications =
+  unfoldr f { messages, notifications }
+  where
+  f { messages, notifications } = case messages, notifications of
+    Nil, Nil → Nothing
+    message : otherMessages, Nil →
+      Just
+        $ renderMessage now message /\
+            { messages: otherMessages, notifications: Nil }
+    Nil, notification : otherNotifications →
+      Just
+        $ renderNotification now notification /\
+            { messages: Nil, notifications: otherNotifications }
+    message : otherMessages, notification : otherNotifications →
+      let
+        (Message { timestamp: messageTimestamp }) = message
+        (Notification { timestamp: notificationTimestamp }) =
+          notification
+      in
+        Just
+          if messageTimestamp < notificationTimestamp then
+            renderMessage now message /\
+              { messages: otherMessages
+              , notifications: notification : otherNotifications
+              }
+          else renderNotification now notification /\
+            { messages: message : otherMessages
+            , notifications: otherNotifications
+            }
 
 renderMessage ∷ Instant → Message → PlainHTML
 renderMessage now (Message { author, text, timestamp }) =
@@ -190,18 +265,35 @@ renderMessage now (Message { author, text, timestamp }) =
     , HH.p_ [ HH.text $ " " <> text ]
     ]
 
-renderUser ∷ User → PlainHTML
-renderUser (User { name }) = HH.div_ [ HH.text name ]
+renderNotification ∷ Instant → Notification → PlainHTML
+renderNotification now (Notification { text, timestamp }) =
+  HH.div
+    [ classes
+        [ Just "flex"
+        , Just "flex-col"
+        , Just "p-1"
+        , Just "ring-1"
+        , Just "text-slate-500"
+        ]
+    ]
+    [ HH.div
+        [ classes [ Just "flex", Just "flex-row", Just "px-1" ] ]
+        [ HH.p
+            [ classes [ Just "italic", Just "text-sm" ] ]
+            [ HH.text $ ago now timestamp ]
+        ]
+    , HH.p_ [ HH.text $ " " <> text ]
+    ]
 
 handleAction
   ∷ ∀ o m. MonadAff m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
   HandleKey keyEvt →
     if KE.key keyEvt == "Enter" then do
-      { draft, room } ← get
-      case room of
-        Just r → do
-          liftAff $ Room.send r "message" $ A.fromString draft
+      { draft, session } ← get
+      case session of
+        Just { room } → do
+          liftAff $ Room.send room "message" $ A.fromString draft
           modify_ \state → state { draft = "" }
         Nothing →
           pure unit
@@ -222,8 +314,9 @@ handleAction = case _ of
       KET.keyup
       (toEventTarget doc)
       (map HandleKey <<< KE.fromEvent)
-    modify_ \state → state { room = Just room }
-  ReceiveMessage msg → pure unit
+    modify_ \state → state
+      { session = Just { id: Room.getSessionId room, room } }
+  ReceiveMessage _ → pure unit
   ReceiveRoomStateUpdate roomState →
     case AD.decodeJson $ Schema.toJson roomState of
       Left decodeError →
@@ -232,8 +325,12 @@ handleAction = case _ of
             <> AD.printJsonDecodeError decodeError
       Right (chatRoomState ∷ ChatRoomState) →
         modify_ \state → state
-          { messages = List.fromFoldable $ chatRoomState.messages
-          , users = Map.fromFoldableWithIndex $ chatRoomState.users
+          { messages = List.fromFoldable
+              $ chatRoomState.messages
+          , notifications = List.fromFoldable
+              $ chatRoomState.notifications
+          , users = Map.fromFoldableWithIndex
+              $ chatRoomState.users
           }
   UpdateCurrentTime ins →
     modify_ \state → state { now = Just ins }

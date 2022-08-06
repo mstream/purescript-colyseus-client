@@ -12,6 +12,16 @@ export class Message extends Schema {
   }
 }
 
+export class Notification extends Schema {
+  @type('string') text = ""
+  @type('number') timestamp = Date.now()
+
+  constructor({text}: {text:string;}) {
+    super()
+    this.text = text
+  }
+}
+
 export class User extends Schema {
   @type('string') name: string = null
   
@@ -23,5 +33,6 @@ export class User extends Schema {
 
 export class ChatRoomState extends Schema {
   @type([Message]) messages = new ArraySchema<Message>()
+  @type([Notification]) notifications = new ArraySchema<Notification>()
   @type({map: User}) users = new MapSchema<User>()
 }
