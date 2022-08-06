@@ -1,22 +1,22 @@
 import Arena from "@colyseus/arena";
 import { monitor } from "@colyseus/monitor";
-import cors from 'cors'
 import { ChatRoom } from "./rooms/Chat";
+import express from 'express'
+import path from 'path'
 
 export default Arena({
     getId: () => "Chat",
 
     initializeGameServer: (gameServer) => {
-        gameServer.define('chat', ChatRoom);
+        gameServer.define('chat', ChatRoom)
 
     },
 
     initializeExpress: (app) => {
-        app.use(cors());
-        app.use("/colyseus", monitor());
+        app.use("/colyseus", monitor())
+        app.use("/chat", express.static(path.join(__dirname, 'public/chat')))
     },
-
 
     beforeListen: () => {
     }
-});
+})

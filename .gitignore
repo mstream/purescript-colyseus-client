@@ -12,3 +12,4 @@ generated-docs
 .spago
 *.generated.*
 .DS_Store
+lib

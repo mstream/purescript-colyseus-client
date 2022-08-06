@@ -27,5 +27,4 @@ export class ChatRoom extends Room<ChatRoomState> {
   onDispose() {
     console.log('room', this.roomId, 'disposing...')
   }
-
 }

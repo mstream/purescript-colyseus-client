@@ -44,7 +44,8 @@ import Halogen.Query.Event (eventListener)
 import Halogen.Subscription as HS
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (toEventTarget)
-import Web.HTML.Window (document)
+import Web.HTML.Location (hostname)
+import Web.HTML.Window (document, location)
 import Web.UIEvent.KeyboardEvent (KeyboardEvent)
 import Web.UIEvent.KeyboardEvent as KE
 import Web.UIEvent.KeyboardEvent.EventTypes as KET
@@ -240,9 +241,14 @@ handleAction = case _ of
     modify_ \state → state { draft = s }
 
 connectToRoom ∷ Aff Room
-connectToRoom = Colyseus.joinOrCreate
-  (Colyseus.makeClient { endpoint: "ws://localhost:2567" })
-  { roomName: "chat", options: A.jsonEmptyObject }
+connectToRoom = do
+  host ← getHostname
+  Colyseus.joinOrCreate
+    (Colyseus.makeClient { endpoint: "ws://" <> host <> ":2567" })
+    { roomName: "chat", options: A.jsonEmptyObject }
+
+getHostname ∷ Aff String
+getHostname = liftEffect $ window >>= location >>= hostname
 
 classes ∷ ∀ i r. Array (Maybe String) → IProp (class ∷ String | r) i
 classes =
