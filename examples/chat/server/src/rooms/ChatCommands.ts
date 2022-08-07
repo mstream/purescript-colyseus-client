@@ -11,6 +11,16 @@ export class OnJoinCommand extends Command<ChatRoom, OnJoinCommandParams> {
   }
 }
 
+type OnLeaveCommandParams = {sessionId: string}
+
+export class OnLeaveCommand extends Command<ChatRoom, OnLeaveCommandParams> {
+  execute({ sessionId }: OnLeaveCommandParams) {
+    this.state.users.delete(sessionId)
+    this.state.notifications.push(new Notification({text: `${sessionId} has left`}))
+  }
+}
+
+
 type OnMessageMessageCommandParams = {sessionId: string, text : string}
 
 export class OnMessageMessageCommand extends Command<ChatRoom, OnMessageMessageCommandParams> {

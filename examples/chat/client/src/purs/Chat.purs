@@ -59,7 +59,7 @@ type State =
   , notifications ∷ List Notification
   , now ∷ Maybe Instant
   , session ∷ Maybe SessionState
-  , users ∷ Map String User
+  , users ∷ Users
   }
 
 type SessionState =
@@ -70,6 +70,8 @@ type ChatRoomState =
   , notifications ∷ Array Notification
   , users ∷ Object User
   }
+
+type Users = Map String User
 
 newtype User = User { name ∷ String }
 
@@ -162,46 +164,71 @@ initialState _ =
 
 render ∷ ∀ m. State → H.ComponentHTML Action () m
 render state = HH.div
-  [ classes [ Just "flex", Just "flex-col" ] ]
-  [ HH.h1_ [ HH.text "Chat Example" ]
-  , HH.div
+  [ classes [ Just "container", Just "mx-auto", Just "px-4" ] ]
+  [ HH.div
       [ classes [ Just "flex", Just "flex-row" ] ]
       [ HH.div
-          [ classes [ Just "flex", Just "flex-col" ] ]
-          [ HH.div
-              [ classes [ Just "flex", Just "flex-col" ] ]
-              case state.now of
-                Just now →
-                  Array.fromFoldable $
-                    HH.fromPlainHTML
-                      <$> renderMessagesAndNotifications
-                        now
-                        state.messages
-                        state.notifications
-                Nothing → [ HH.text "" ]
-          , HH.div
-              [ classes [ Just "border" ] ]
-              [ HH.input
-                  [ HP.value state.draft, HE.onValueInput UpdateDraft ]
-              ]
+          [ classes [ Just "p-1", Just "w-4/5" ] ]
+          [ case state.now of
+              Just now →
+                renderConversationPanel
+                  now
+                  state.messages
+                  state.notifications
+                  state.draft
+              Nothing →
+                renderLoading
           ]
       , HH.div
-          [ classes [ Just "flex", Just "flex-col" ] ]
-          [ HH.h2_ [ HH.text "Users" ]
-          , HH.div
-              [ classes [ Just "flex", Just "flex-col" ] ]
-              case state.session of
-                Just session →
-                  Array.fromFoldable $ HH.fromPlainHTML
-                    <$> renderUsers
-                      session.id
-                      state.users
-                Nothing → [ HH.text "" ]
+          [ classes [ Just "p-1", Just "w-1/5" ] ]
+          [ case state.session of
+              Just session →
+                renderUserPanel session.id state.users
+              Nothing →
+                renderLoading
           ]
       ]
   ]
+  where
+  renderLoading =
+    HH.text "Loading..."
 
-renderUsers ∷ String → Map String User → List PlainHTML
+  renderUserPanel sessionId users =
+    HH.div
+      [ classes [ Just "flex", Just "flex-col" ] ]
+      [ HH.h2_ [ HH.text "Users" ]
+      , HH.div
+          [ classes [ Just "flex", Just "flex-col" ] ]
+          ( Array.fromFoldable
+              $ HH.fromPlainHTML <$> renderUsers sessionId users
+          )
+      ]
+
+  renderConversationPanel now messages notifications draft =
+    HH.div
+      [ classes [ Just "flex", Just "flex-col" ] ]
+      [ HH.div
+          [ classes [ Just "flex", Just "flex-col" ] ]
+          ( Array.fromFoldable
+              $ HH.fromPlainHTML
+                  <$> renderMessagesAndNotifications
+                    now
+                    messages
+                    notifications
+          )
+      , HH.div
+          [ classes [ Just "border" ] ]
+          [ HH.input
+              [ classes [ Just "w-full" ]
+              , HP.autofocus true
+              , HP.placeholder "New message here..."
+              , HP.value draft
+              , HE.onValueInput UpdateDraft
+              ]
+          ]
+      ]
+
+renderUsers ∷ String → Users → List PlainHTML
 renderUsers sessionId users =
   Map.values $ renderUser sessionId `mapWithIndex` users
 

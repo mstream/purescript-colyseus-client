@@ -1,7 +1,7 @@
 import { Room, Client } from "colyseus";
 import { Dispatcher } from "@colyseus/command";
 import { ChatRoomState } from "./schema/ChatRoomState";
-import { OnJoinCommand, OnMessageMessageCommand } from "./ChatCommands";
+import { OnJoinCommand, OnLeaveCommand, OnMessageMessageCommand } from "./ChatCommands";
 
 export class ChatRoom extends Room<ChatRoomState> {
 
@@ -10,6 +10,7 @@ export class ChatRoom extends Room<ChatRoomState> {
   onCreate (options: any) {
     this.maxClients = 10
 
+    this.setPatchRate(1000)
     this.setState(new ChatRoomState())
 
     this.onMessage('message', (client, text) => {
@@ -28,7 +29,10 @@ export class ChatRoom extends Room<ChatRoomState> {
   }
 
   onLeave (client: Client, consented: boolean) {
-    console.log(client.sessionId, 'left!')
+    this.dispatcher.dispatch(
+      new OnLeaveCommand(),
+      {sessionId: client.sessionId}
+    )
   }
 
   onDispose() {

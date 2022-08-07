@@ -21,6 +21,8 @@
   , "prelude"
   , "tailrec"
   , "transformers"
+  , "tuples"
+  , "unfoldable"
   , "web-html"
   , "web-uievents"
   ]
