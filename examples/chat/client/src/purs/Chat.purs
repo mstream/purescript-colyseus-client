@@ -11,7 +11,7 @@ import Colyseus.Schema as Schema
 import Control.Monad.Error.Class (try)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Rec.Class (forever)
-import Control.Monad.State (get, modify_)
+import Control.Monad.State (get, put)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core as A
 import Data.Argonaut.Decode
@@ -25,6 +25,7 @@ import Data.DateTime.Instant (Instant, instant, unInstant)
 import Data.Either (Either(..))
 import Data.Either.Nested (type (\/))
 import Data.Foldable (foldMap)
+import Data.Function.Uncurried (Fn1, runFn1)
 import Data.FunctorWithIndex (mapWithIndex)
 import Data.Int as Int
 import Data.List (List(..), (:))
@@ -32,16 +33,18 @@ import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), maybe)
+import Data.String as String
 import Data.Time.Duration (Milliseconds(..))
 import Data.Tuple.Nested ((/\))
 import Data.Unfoldable (unfoldr)
+import Effect (Effect)
 import Effect.Aff (Aff, delay, forkAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
-import Effect.Class (liftEffect)
+import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Console as Console
 import Effect.Now (now)
 import Foreign.Object (Object)
-import Halogen (ClassName(..))
+import Halogen (ClassName(..), HalogenM)
 import Halogen as H
 import Halogen.HTML (IProp, PlainHTML)
 import Halogen.HTML as HH
@@ -49,21 +52,30 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Query.Event (eventListener)
 import Halogen.Subscription as HS
+import Web.DOM (Element)
+import Web.DOM.Element (scrollHeight, setScrollTop)
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (toEventTarget)
+import Web.HTML.HTMLElement (offsetHeight, toElement)
 import Web.HTML.Location (hostname)
 import Web.HTML.Window (document, location)
 import Web.UIEvent.KeyboardEvent (KeyboardEvent)
 import Web.UIEvent.KeyboardEvent as KE
 import Web.UIEvent.KeyboardEvent.EventTypes as KET
 
-type State =
+data State
+  = Joining String
+  | Joined String JoinedState
+  | SetUp JoinedState
+  | FailedToJoin String
+
+type JoinedState =
   { draft ∷ String
   , maxUsers ∷ Int
   , messages ∷ List Message
   , notifications ∷ List Notification
   , now ∷ Maybe Instant
-  , session ∷ Maybe (JoinError \/ SessionState)
+  , session ∷ SessionState
   , users ∷ Users
   }
 
@@ -160,50 +172,67 @@ component =
     }
 
 initialState ∷ ∀ i. i → State
-initialState _ =
-  { draft: ""
-  , maxUsers: 0
-  , messages: Nil
-  , notifications: Nil
-  , now: Nothing
-  , session: Nothing
-  , users: Map.empty
-  }
+initialState _ = Joining "chat"
 
 render ∷ ∀ m. State → H.ComponentHTML Action () m
 render state = HH.div
-  [ classes [ Just "container", Just "mx-auto", Just "px-4" ] ]
-  [ case state.session of
-      Just (Left RoomNotFound) →
-        HH.text "Chat room is full."
+  [ classes
+      [ Just "container", Just "h-screen", Just "mx-auto", Just "px-4" ]
+  ]
+  [ case state of
+      Joining roomName →
+        renderJoiningState roomName
 
-      Just (Left (Other _)) →
-        HH.text "Unexpected error."
+      Joined userNameDraft _ →
+        renderJoinedState userNameDraft
 
-      Just (Right session) →
-        HH.div
-          [ classes [ Just "flex", Just "flex-row" ] ]
-          [ HH.div
-              [ classes [ Just "p-1", Just "w-4/5" ] ]
-              [ case state.now of
-                  Just now →
-                    renderConversationPanel
-                      now
-                      state.messages
-                      state.notifications
-                      state.draft
-                  Nothing →
-                    renderLoading
-              ]
-          , HH.div
-              [ classes [ Just "p-1", Just "w-1/5" ] ]
-              [ renderUserPanel state.maxUsers session.id state.users ]
-          ]
+      SetUp joinedState →
+        renderSetUpState joinedState
 
-      Nothing →
-        renderLoading
+      FailedToJoin reason →
+        renderFailedToJoinState reason
   ]
   where
+  renderJoiningState roomName =
+    HH.text $ "Joining room: " <> roomName
+
+  renderJoinedState userNameDraft =
+    HH.div
+      [ classes [ Just "border" ] ]
+      [ HH.input
+          [ classes [ Just "w-full" ]
+          , HP.autofocus true
+          , HP.placeholder "Enter your name here..."
+          , HP.value userNameDraft
+          , HE.onValueInput UpdateDraft
+          ]
+      ]
+
+  renderFailedToJoinState reason =
+    HH.text $ "Failed to join the room: " <> reason
+
+  renderSetUpState state =
+    HH.div
+      [ classes [ Just "flex", Just "flex-row", Just "h-full" ] ]
+      [ HH.div
+          [ classes [ Just "h-full", Just "p-1", Just "w-4/5" ] ]
+          [ case state.now of
+              Just now →
+                renderConversationPanel
+                  state.users
+                  now
+                  state.messages
+                  state.notifications
+                  state.draft
+              Nothing →
+                renderLoading
+          ]
+      , HH.div
+          [ classes [ Just "h-full", Just "p-1", Just "w-1/5" ] ]
+          [ renderUserPanel state.maxUsers state.session.id state.users
+          ]
+      ]
+
   renderLoading =
     HH.text "Loading..."
 
@@ -225,20 +254,29 @@ render state = HH.div
           )
       ]
 
-  renderConversationPanel now messages notifications draft =
+  renderConversationPanel users now messages notifications draft =
     HH.div
-      [ classes [ Just "flex", Just "flex-col" ] ]
+      [ classes [ Just "flex", Just "flex-col", Just "h-full" ] ]
       [ HH.div
-          [ classes [ Just "flex", Just "flex-col" ] ]
-          ( Array.fromFoldable
-              $ HH.fromPlainHTML
-                  <$> renderMessagesAndNotifications
-                    now
-                    messages
-                    notifications
+          [ classes
+              [ Just "flex"
+              , Just "flex-col"
+              , Just "h-5/6"
+              , Just "overflow-x-hidden"
+              , Just "overflow-y-scroll"
+              ]
+          ]
+          ( ( Array.fromFoldable
+                $ HH.fromPlainHTML
+                    <$> renderMessagesAndNotifications
+                      users
+                      now
+                      messages
+                      notifications
+            ) <> [ HH.div [ HP.ref conversationBottomRefLabel ] [] ]
           )
       , HH.div
-          [ classes [ Just "border" ] ]
+          [ classes [ Just "border", Just "h-1/6" ] ]
           [ HH.input
               [ classes [ Just "w-full" ]
               , HP.autofocus true
@@ -264,15 +302,15 @@ renderUser currentSessionId sessionId (User { name }) =
     [ HH.text name ]
 
 renderMessagesAndNotifications
-  ∷ Instant → List Message → List Notification → List PlainHTML
-renderMessagesAndNotifications now messages notifications =
+  ∷ Users → Instant → List Message → List Notification → List PlainHTML
+renderMessagesAndNotifications users now messages notifications =
   unfoldr f { messages, notifications }
   where
   f { messages, notifications } = case messages, notifications of
     Nil, Nil → Nothing
     message : otherMessages, Nil →
       Just
-        $ renderMessage now message /\
+        $ renderMessage users now message /\
             { messages: otherMessages, notifications: Nil }
     Nil, notification : otherNotifications →
       Just
@@ -286,7 +324,7 @@ renderMessagesAndNotifications now messages notifications =
       in
         Just
           if messageTimestamp < notificationTimestamp then
-            renderMessage now message /\
+            renderMessage users now message /\
               { messages: otherMessages
               , notifications: notification : otherNotifications
               }
@@ -295,17 +333,20 @@ renderMessagesAndNotifications now messages notifications =
             , notifications: otherNotifications
             }
 
-renderMessage ∷ Instant → Message → PlainHTML
-renderMessage now (Message { author, text, timestamp }) =
+renderMessage ∷ Users → Instant → Message → PlainHTML
+renderMessage users now (Message { author, text, timestamp }) =
   HH.div
     [ classes
-        [ Just "flex", Just "flex-col", Just "p-1", Just "ring-1" ]
+        [ Just "flex", Just "flex-col", Just "p-1" ]
     ]
     [ HH.div
         [ classes [ Just "flex", Just "flex-row", Just "px-1" ] ]
         [ HH.p
             [ classes [ Just "font-medium" ] ]
-            [ HH.text author ]
+            [ HH.text case Map.lookup author users of
+                Just (User { name }) → name
+                Nothing → author
+            ]
         , HH.p
             [ classes [ Just "italic", Just "text-sm" ] ]
             [ HH.text $ ago now timestamp ]
@@ -320,14 +361,14 @@ renderNotification now (Notification { text, timestamp }) =
         [ Just "flex"
         , Just "flex-col"
         , Just "p-1"
-        , Just "ring-1"
         , Just "text-slate-500"
+        , Just "text-sm"
         ]
     ]
     [ HH.div
         [ classes [ Just "flex", Just "flex-row", Just "px-1" ] ]
         [ HH.p
-            [ classes [ Just "italic", Just "text-sm" ] ]
+            [ classes [ Just "italic", Just "text-xs" ] ]
             [ HH.text $ ago now timestamp ]
         ]
     , HH.p_ [ HH.text $ " " <> text ]
@@ -338,69 +379,140 @@ handleAction
 handleAction = case _ of
   HandleKey keyEvt →
     if KE.key keyEvt == "Enter" then do
-      { draft, session } ← get
-      case session of
-        Just (Right { room }) → do
-          liftAff $ Room.send room "message" $ A.fromString draft
-          modify_ \state → state { draft = "" }
-        _ →
-          pure unit
+      state ← get
+      case state of
+        Joined userNameDraft joinedState@{ session } →
+          let
+            userName = String.trim userNameDraft
+          in
+            if String.null userName then pure unit
+            else do
+              liftAff
+                $ Room.send session.room "changeName"
+                $ A.fromString userNameDraft
+
+              put $ SetUp joinedState
+
+        SetUp joinedState@{ draft, session } →
+          let
+            message = String.trim draft
+          in
+            if String.null message then pure unit
+            else do
+              liftAff
+                $ Room.send session.room "postMessage"
+                $ A.fromString draft
+
+              put $ SetUp joinedState { draft = "" }
+
+        _ → pure unit
     else pure unit
+
   Initialize → do
-    roomResult ← liftAff $ try connectToRoom
-    case roomResult of
-      Left _ →
-        modify_ \state → state
-          { session = Just $ Left $ Other "unexpected error" }
-      Right (Left joinError) →
-        modify_ \state → state
-          { session = Just $ Left joinError }
-      Right (Right room) → do
-        { emitter, listener } ← liftEffect HS.create
-        liftAff
-          $ Room.addStateChangeListener room
-          $ HS.notify listener <<< ReceiveRoomStateUpdate
-        void $ liftAff $ forkAff $ forever do
-          delay $ Milliseconds 1000.0
-          ins ← liftEffect now
-          liftEffect $ HS.notify listener $ UpdateCurrentTime ins
-        void $ H.subscribe emitter
-        doc ← H.liftEffect $ document =<< window
-        void $ H.subscribe $ eventListener
-          KET.keyup
-          (toEventTarget doc)
-          (map HandleKey <<< KE.fromEvent)
-        modify_ \state → state
-          { session = Just $ Right { id: Room.getSessionId room, room }
-          }
+    state ← get
+    case state of
+      Joining roomName → do
+        roomResult ← liftAff $ try $ connectToRoom roomName
+        case roomResult of
+          Left _ →
+            put $ FailedToJoin "unexpected error"
+
+          Right (Left RoomNotFound) →
+            put $ FailedToJoin "room not found"
+
+          Right (Left (Other errorDescription)) →
+            put $ FailedToJoin errorDescription
+
+          Right (Right room) → do
+            { emitter, listener } ← liftEffect HS.create
+            liftAff
+              $ Room.addStateChangeListener room
+              $ HS.notify listener <<< ReceiveRoomStateUpdate
+            void $ liftAff $ forkAff $ forever do
+              delay $ Milliseconds 1000.0
+              ins ← liftEffect now
+              liftEffect $ HS.notify listener $ UpdateCurrentTime ins
+            void $ H.subscribe emitter
+            doc ← H.liftEffect $ document =<< window
+            void $ H.subscribe $ eventListener
+              KET.keyup
+              (toEventTarget doc)
+              (map HandleKey <<< KE.fromEvent)
+            put $ Joined
+              ""
+              { draft: ""
+              , maxUsers: 0
+              , messages: Nil
+              , notifications: Nil
+              , now: Nothing
+              , session: { id: Room.getSessionId room, room }
+              , users: Map.empty
+              }
+      _ → pure unit
+
   ReceiveMessage _ → pure unit
+
   ReceiveRoomStateUpdate roomState →
     case AD.decodeJson $ Schema.toJson roomState of
       Left decodeError →
         liftEffect $ Console.error $
           "Could not decode the chat room state: "
             <> AD.printJsonDecodeError decodeError
-      Right (chatRoomState ∷ ChatRoomState) →
-        modify_ \state → state
-          { maxUsers = chatRoomState.maxUsers
-          , messages = List.fromFoldable
-              $ chatRoomState.messages
-          , notifications = List.fromFoldable
-              $ chatRoomState.notifications
-          , users = Map.fromFoldableWithIndex
-              $ chatRoomState.users
-          }
-  UpdateCurrentTime ins →
-    modify_ \state → state { now = Just ins }
-  UpdateDraft s →
-    modify_ \state → state { draft = s }
+      Right (chatRoomState ∷ ChatRoomState) → do
+        let
+          updateJoinedState joinedState =
+            joinedState
+              { maxUsers = chatRoomState.maxUsers
+              , messages = List.fromFoldable
+                  $ chatRoomState.messages
+              , notifications = List.fromFoldable
+                  $ chatRoomState.notifications
+              , users = Map.fromFoldableWithIndex
+                  $ chatRoomState.users
+              }
+        state ← get
 
-connectToRoom ∷ Aff (JoinError \/ Room)
-connectToRoom = do
+        put case state of
+          Joined userNameDraft joinedState →
+            Joined userNameDraft $ updateJoinedState joinedState
+          SetUp joinedState →
+            SetUp $ updateJoinedState joinedState
+          otherState →
+            otherState
+
+        scrollConversationWindowToBottom
+
+  UpdateCurrentTime ins → do
+    let
+      updateJoinedState joinedState =
+        joinedState { now = Just ins }
+    state ← get
+    put case state of
+      Joined userNameDraft joinedState →
+        Joined userNameDraft $ updateJoinedState joinedState
+      SetUp joinedState →
+        SetUp $ updateJoinedState joinedState
+      otherState →
+        otherState
+
+  UpdateDraft s → do
+    state ← get
+    put case state of
+      Joined _ joinedState →
+        Joined s joinedState
+
+      SetUp joinedState →
+        SetUp joinedState { draft = s }
+
+      otherState →
+        otherState
+
+connectToRoom ∷ String → Aff (JoinError \/ Room)
+connectToRoom roomName = do
   host ← getHostname
   runExceptT $ Colyseus.join
     (Colyseus.makeClient { endpoint: "ws://" <> host <> ":2567" })
-    { roomName: "chat", options: A.jsonEmptyObject }
+    { roomName, options: A.jsonEmptyObject }
 
 getHostname ∷ Aff String
 getHostname = liftEffect $ window >>= location >>= hostname
@@ -408,3 +520,31 @@ getHostname = liftEffect $ window >>= location >>= hostname
 classes ∷ ∀ i r. Array (Maybe String) → IProp (class ∷ String | r) i
 classes =
   HP.classes <<< (foldMap $ maybe [] (Array.singleton <<< ClassName))
+
+scrollConversationWindowToBottom
+  ∷ ∀ state action slots output m
+  . MonadEffect m
+  ⇒ HalogenM state action slots output m Unit
+scrollConversationWindowToBottom = do
+  mbEl ← H.getHTMLElementRef conversationBottomRefLabel
+  case mbEl of
+    Just el → liftEffect do
+      let
+        hel = toElement el
+      sh ← scrollHeight hel
+      oh ← offsetHeight el
+      let
+        maxScroll = sh - oh
+      setScrollTop maxScroll hel
+      scrollIntoView hel
+
+    Nothing →
+      pure unit
+
+conversationBottomRefLabel ∷ H.RefLabel
+conversationBottomRefLabel = H.RefLabel "conversation-bottom"
+
+scrollIntoView ∷ Element → Effect Unit
+scrollIntoView = runFn1 scrollIntoViewImpl
+
+foreign import scrollIntoViewImpl ∷ Fn1 Element (Effect Unit)
