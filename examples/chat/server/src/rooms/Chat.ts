@@ -3,15 +3,18 @@ import { Dispatcher } from "@colyseus/command";
 import { ChatRoomState } from "./schema/ChatRoomState";
 import { OnJoinCommand, OnLeaveCommand, OnMessageMessageCommand } from "./ChatCommands";
 
+const maxClients = 10
+const patchRate = 1000
+
 export class ChatRoom extends Room<ChatRoomState> {
 
   dispatcher = new Dispatcher(this)
   
   onCreate (options: any) {
-    this.maxClients = 10
-
-    this.setPatchRate(1000)
-    this.setState(new ChatRoomState())
+    this.autoDispose = false
+    this.maxClients = maxClients
+    this.setState(new ChatRoomState({maxUsers: maxClients}))
+    this.setPatchRate(patchRate)
 
     this.onMessage('message', (client, text) => {
       this.dispatcher.dispatch(

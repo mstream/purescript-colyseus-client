@@ -2,11 +2,14 @@ module Chat where
 
 import Prelude
 
+import Colyseus.Client (JoinError(..))
 import Colyseus.Client as Colyseus
 import Colyseus.Client.Room (Room)
 import Colyseus.Client.Room as Room
 import Colyseus.Schema (Schema)
 import Colyseus.Schema as Schema
+import Control.Monad.Error.Class (try)
+import Control.Monad.Except (runExceptT)
 import Control.Monad.Rec.Class (forever)
 import Control.Monad.State (get, modify_)
 import Data.Argonaut.Core (Json)
@@ -20,6 +23,7 @@ import Data.Argonaut.Decode as AD
 import Data.Array as Array
 import Data.DateTime.Instant (Instant, instant, unInstant)
 import Data.Either (Either(..))
+import Data.Either.Nested (type (\/))
 import Data.Foldable (foldMap)
 import Data.FunctorWithIndex (mapWithIndex)
 import Data.Int as Int
@@ -55,10 +59,11 @@ import Web.UIEvent.KeyboardEvent.EventTypes as KET
 
 type State =
   { draft ∷ String
+  , maxUsers ∷ Int
   , messages ∷ List Message
   , notifications ∷ List Notification
   , now ∷ Maybe Instant
-  , session ∷ Maybe SessionState
+  , session ∷ Maybe (JoinError \/ SessionState)
   , users ∷ Users
   }
 
@@ -66,7 +71,8 @@ type SessionState =
   { id ∷ String, room ∷ Room }
 
 type ChatRoomState =
-  { messages ∷ Array Message
+  { maxUsers ∷ Int
+  , messages ∷ Array Message
   , notifications ∷ Array Notification
   , users ∷ Object User
   }
@@ -105,6 +111,7 @@ instance DecodeJson Notification where
 newtype Timestamp = Timestamp Instant
 
 derive newtype instance Show Timestamp
+derive newtype instance Eq Timestamp
 derive newtype instance Ord Timestamp
 
 instance DecodeJson Timestamp where
@@ -155,6 +162,7 @@ component =
 initialState ∷ ∀ i. i → State
 initialState _ =
   { draft: ""
+  , maxUsers: 0
   , messages: Nil
   , notifications: Nil
   , now: Nothing
@@ -165,38 +173,51 @@ initialState _ =
 render ∷ ∀ m. State → H.ComponentHTML Action () m
 render state = HH.div
   [ classes [ Just "container", Just "mx-auto", Just "px-4" ] ]
-  [ HH.div
-      [ classes [ Just "flex", Just "flex-row" ] ]
-      [ HH.div
-          [ classes [ Just "p-1", Just "w-4/5" ] ]
-          [ case state.now of
-              Just now →
-                renderConversationPanel
-                  now
-                  state.messages
-                  state.notifications
-                  state.draft
-              Nothing →
-                renderLoading
+  [ case state.session of
+      Just (Left RoomNotFound) →
+        HH.text "Chat room is full."
+
+      Just (Left (Other _)) →
+        HH.text "Unexpected error."
+
+      Just (Right session) →
+        HH.div
+          [ classes [ Just "flex", Just "flex-row" ] ]
+          [ HH.div
+              [ classes [ Just "p-1", Just "w-4/5" ] ]
+              [ case state.now of
+                  Just now →
+                    renderConversationPanel
+                      now
+                      state.messages
+                      state.notifications
+                      state.draft
+                  Nothing →
+                    renderLoading
+              ]
+          , HH.div
+              [ classes [ Just "p-1", Just "w-1/5" ] ]
+              [ renderUserPanel state.maxUsers session.id state.users ]
           ]
-      , HH.div
-          [ classes [ Just "p-1", Just "w-1/5" ] ]
-          [ case state.session of
-              Just session →
-                renderUserPanel session.id state.users
-              Nothing →
-                renderLoading
-          ]
-      ]
+
+      Nothing →
+        renderLoading
   ]
   where
   renderLoading =
     HH.text "Loading..."
 
-  renderUserPanel sessionId users =
+  renderUserPanel maxUsers sessionId users =
     HH.div
       [ classes [ Just "flex", Just "flex-col" ] ]
-      [ HH.h2_ [ HH.text "Users" ]
+      [ HH.h2_
+          [ HH.text
+              $ "Users ("
+                  <> (show $ Map.size users)
+                  <> "/"
+                  <> show maxUsers
+                  <> ")"
+          ]
       , HH.div
           [ classes [ Just "flex", Just "flex-col" ] ]
           ( Array.fromFoldable
@@ -319,30 +340,39 @@ handleAction = case _ of
     if KE.key keyEvt == "Enter" then do
       { draft, session } ← get
       case session of
-        Just { room } → do
+        Just (Right { room }) → do
           liftAff $ Room.send room "message" $ A.fromString draft
           modify_ \state → state { draft = "" }
-        Nothing →
+        _ →
           pure unit
     else pure unit
   Initialize → do
-    room ← liftAff connectToRoom
-    { emitter, listener } ← liftEffect HS.create
-    liftAff
-      $ Room.addStateChangeListener room
-      $ HS.notify listener <<< ReceiveRoomStateUpdate
-    void $ liftAff $ forkAff $ forever do
-      delay $ Milliseconds 1000.0
-      ins ← liftEffect now
-      liftEffect $ HS.notify listener $ UpdateCurrentTime ins
-    void $ H.subscribe emitter
-    doc ← H.liftEffect $ document =<< window
-    void $ H.subscribe $ eventListener
-      KET.keyup
-      (toEventTarget doc)
-      (map HandleKey <<< KE.fromEvent)
-    modify_ \state → state
-      { session = Just { id: Room.getSessionId room, room } }
+    roomResult ← liftAff $ try connectToRoom
+    case roomResult of
+      Left _ →
+        modify_ \state → state
+          { session = Just $ Left $ Other "unexpected error" }
+      Right (Left joinError) →
+        modify_ \state → state
+          { session = Just $ Left joinError }
+      Right (Right room) → do
+        { emitter, listener } ← liftEffect HS.create
+        liftAff
+          $ Room.addStateChangeListener room
+          $ HS.notify listener <<< ReceiveRoomStateUpdate
+        void $ liftAff $ forkAff $ forever do
+          delay $ Milliseconds 1000.0
+          ins ← liftEffect now
+          liftEffect $ HS.notify listener $ UpdateCurrentTime ins
+        void $ H.subscribe emitter
+        doc ← H.liftEffect $ document =<< window
+        void $ H.subscribe $ eventListener
+          KET.keyup
+          (toEventTarget doc)
+          (map HandleKey <<< KE.fromEvent)
+        modify_ \state → state
+          { session = Just $ Right { id: Room.getSessionId room, room }
+          }
   ReceiveMessage _ → pure unit
   ReceiveRoomStateUpdate roomState →
     case AD.decodeJson $ Schema.toJson roomState of
@@ -352,7 +382,8 @@ handleAction = case _ of
             <> AD.printJsonDecodeError decodeError
       Right (chatRoomState ∷ ChatRoomState) →
         modify_ \state → state
-          { messages = List.fromFoldable
+          { maxUsers = chatRoomState.maxUsers
+          , messages = List.fromFoldable
               $ chatRoomState.messages
           , notifications = List.fromFoldable
               $ chatRoomState.notifications
@@ -364,10 +395,10 @@ handleAction = case _ of
   UpdateDraft s →
     modify_ \state → state { draft = s }
 
-connectToRoom ∷ Aff Room
+connectToRoom ∷ Aff (JoinError \/ Room)
 connectToRoom = do
   host ← getHostname
-  Colyseus.joinOrCreate
+  runExceptT $ Colyseus.join
     (Colyseus.makeClient { endpoint: "ws://" <> host <> ":2567" })
     { roomName: "chat", options: A.jsonEmptyObject }
 
