@@ -18,6 +18,7 @@ import Data.Argonaut.Decode
   ( class DecodeJson
   , JsonDecodeError(..)
   , (.:)
+  , (.:?)
   )
 import Data.Argonaut.Decode as AD
 import Data.Array as Array
@@ -32,7 +33,7 @@ import Data.List (List(..))
 import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), maybe)
+import Data.Maybe (Maybe(..), isNothing, maybe)
 import Data.String as String
 import Data.Time.Duration (Milliseconds(..))
 import Effect (Effect)
@@ -55,7 +56,7 @@ import Web.DOM.Element (scrollHeight, setScrollTop)
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (toEventTarget)
 import Web.HTML.HTMLElement (offsetHeight, toElement)
-import Web.HTML.Location (hostname)
+import Web.HTML.Location (hostname, protocol)
 import Web.HTML.Window (document, location)
 import Web.UIEvent.KeyboardEvent (KeyboardEvent)
 import Web.UIEvent.KeyboardEvent as KE
@@ -112,13 +113,14 @@ type ChatRoomState =
 
 type Users = Map String User
 
-newtype User = User { name ∷ String }
+newtype User = User { leftAt ∷ Maybe Timestamp, name ∷ String }
 
 instance DecodeJson User where
   decodeJson json = do
     obj ← AD.decodeJson json
+    leftAt ← obj .:? "leftAt"
     name ← obj .: "name"
-    pure $ User { name }
+    pure $ User { leftAt, name }
 
 newtype Timestamp = Timestamp Instant
 
@@ -251,22 +253,26 @@ render state = HH.div
     HH.text "Loading..."
 
   renderUserPanel maxUsers sessionId users =
-    HH.div
-      [ classes [ Just "flex", Just "flex-col" ] ]
-      [ HH.h2_
-          [ HH.text
-              $ "Users ("
-                  <> (show $ Map.size users)
-                  <> "/"
-                  <> show maxUsers
-                  <> ")"
-          ]
-      , HH.div
-          [ classes [ Just "flex", Just "flex-col" ] ]
-          ( Array.fromFoldable
-              $ HH.fromPlainHTML <$> renderUsers sessionId users
-          )
-      ]
+    let
+      activeUsers =
+        users # Map.filter \(User { leftAt }) → isNothing leftAt
+    in
+      HH.div
+        [ classes [ Just "flex", Just "flex-col" ] ]
+        [ HH.h2_
+            [ HH.text
+                $ "Users ("
+                    <> (show $ Map.size activeUsers)
+                    <> "/"
+                    <> show maxUsers
+                    <> ")"
+            ]
+        , HH.div
+            [ classes [ Just "flex", Just "flex-col" ] ]
+            ( Array.fromFoldable
+                $ HH.fromPlainHTML <$> renderUsers sessionId activeUsers
+            )
+        ]
 
   renderConversationPanel users now posts draft =
     HH.div
@@ -512,13 +518,23 @@ handleAction = case _ of
 
 connectToRoom ∷ String → Aff (JoinError \/ Room)
 connectToRoom roomName = do
+  protocol ← getProtocol
   host ← getHostname
+
+  let
+    endpoint =
+      if protocol == "https" then "wss://" <> host
+      else "ws://" <> host <> ":2567"
+
   runExceptT $ Colyseus.join
-    (Colyseus.makeClient { endpoint: "ws://" <> host <> ":2567" })
+    (Colyseus.makeClient { endpoint })
     { roomName, options: A.jsonEmptyObject }
 
 getHostname ∷ Aff String
 getHostname = liftEffect $ window >>= location >>= hostname
+
+getProtocol ∷ Aff String
+getProtocol = liftEffect $ window >>= location >>= protocol
 
 classes ∷ ∀ i r. Array (Maybe String) → IProp (class ∷ String | r) i
 classes =

@@ -35,7 +35,7 @@ export class ChatRoom extends Room<ChatRoomState> {
   onJoin (client: Client, options: any) {
     this.dispatcher.dispatch(
       new OnJoinCommand(),
-      {maxPosts, sessionId: client.sessionId}
+      {maxPosts, posts: this.state.posts, sessionId: client.sessionId}
     )
   }
 

@@ -29,6 +29,7 @@ export class Message extends Post {
 
 export class User extends Schema {
   @type('string') name: string = null
+  @type('number') leftAt: number = null
   
   constructor({name}: {name: string}) {
     super()
