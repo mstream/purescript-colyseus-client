@@ -211,25 +211,28 @@ render state = HH.div
   renderFailedToJoinState reason =
     HH.text $ "Failed to join the room: " <> reason
 
-  renderSetUpState state =
+  renderSetUpState joinedState =
     HH.div
       [ classes [ Just "flex", Just "flex-row", Just "h-full" ] ]
       [ HH.div
           [ classes [ Just "h-full", Just "p-1", Just "w-4/5" ] ]
-          [ case state.now of
+          [ case joinedState.now of
               Just now →
                 renderConversationPanel
-                  state.users
+                  joinedState.users
                   now
-                  state.messages
-                  state.notifications
-                  state.draft
+                  joinedState.messages
+                  joinedState.notifications
+                  joinedState.draft
               Nothing →
                 renderLoading
           ]
       , HH.div
           [ classes [ Just "h-full", Just "p-1", Just "w-1/5" ] ]
-          [ renderUserPanel state.maxUsers state.session.id state.users
+          [ renderUserPanel
+              joinedState.maxUsers
+              joinedState.session.id
+              joinedState.users
           ]
       ]
 
@@ -277,8 +280,8 @@ render state = HH.div
           )
       , HH.div
           [ classes [ Just "border", Just "h-1/6" ] ]
-          [ HH.input
-              [ classes [ Just "w-full" ]
+          [ HH.textarea
+              [ classes [ Just "h-full", Just "w-full" ]
               , HP.autofocus true
               , HP.placeholder "New message here..."
               , HP.value draft
@@ -306,7 +309,7 @@ renderMessagesAndNotifications
 renderMessagesAndNotifications users now messages notifications =
   unfoldr f { messages, notifications }
   where
-  f { messages, notifications } = case messages, notifications of
+  f next = case next.messages, next.notifications of
     Nil, Nil → Nothing
     message : otherMessages, Nil →
       Just
@@ -340,9 +343,14 @@ renderMessage users now (Message { author, text, timestamp }) =
         [ Just "flex", Just "flex-col", Just "p-1" ]
     ]
     [ HH.div
-        [ classes [ Just "flex", Just "flex-row", Just "px-1" ] ]
+        [ classes
+            [ Just "flex"
+            , Just "flex-row"
+            , Just "items-end"
+            ]
+        ]
         [ HH.p
-            [ classes [ Just "font-medium" ] ]
+            [ classes [ Just "font-medium", Just "mr-1" ] ]
             [ HH.text case Map.lookup author users of
                 Just (User { name }) → name
                 Nothing → author
@@ -351,7 +359,9 @@ renderMessage users now (Message { author, text, timestamp }) =
             [ classes [ Just "italic", Just "text-sm" ] ]
             [ HH.text $ ago now timestamp ]
         ]
-    , HH.p_ [ HH.text $ " " <> text ]
+    , HH.p
+        [ classes [ Just "ml-1", Just "whitespace-pre-wrap" ] ]
+        [ HH.text text ]
     ]
 
 renderNotification ∷ Instant → Notification → PlainHTML
@@ -366,47 +376,52 @@ renderNotification now (Notification { text, timestamp }) =
         ]
     ]
     [ HH.div
-        [ classes [ Just "flex", Just "flex-row", Just "px-1" ] ]
+        [ classes [ Just "flex", Just "flex-row" ] ]
         [ HH.p
             [ classes [ Just "italic", Just "text-xs" ] ]
             [ HH.text $ ago now timestamp ]
         ]
-    , HH.p_ [ HH.text $ " " <> text ]
+    , HH.p
+        [ classes [ Just "ml-1", Just "whitespace-pre-wrap" ] ]
+        [ HH.text $ text ]
     ]
 
 handleAction
   ∷ ∀ o m. MonadAff m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
   HandleKey keyEvt →
-    if KE.key keyEvt == "Enter" then do
-      state ← get
-      case state of
-        Joined userNameDraft joinedState@{ session } →
-          let
-            userName = String.trim userNameDraft
-          in
-            if String.null userName then pure unit
-            else do
-              liftAff
-                $ Room.send session.room "changeName"
-                $ A.fromString userNameDraft
+    case KE.key keyEvt of
+      "Enter" → do
+        state ← get
+        case state of
+          Joined userNameDraft joinedState@{ session } →
+            let
+              userName = String.trim userNameDraft
+            in
+              if String.null userName then pure unit
+              else do
+                liftAff
+                  $ Room.send session.room "changeName"
+                  $ A.fromString userNameDraft
 
-              put $ SetUp joinedState
+                put $ SetUp joinedState
 
-        SetUp joinedState@{ draft, session } →
-          let
-            message = String.trim draft
-          in
-            if String.null message then pure unit
-            else do
-              liftAff
-                $ Room.send session.room "postMessage"
-                $ A.fromString draft
+          SetUp joinedState@{ draft, session } →
+            if KE.shiftKey keyEvt then pure unit
+            else
+              let
+                message = String.trim draft
+              in
+                if String.null message then pure unit
+                else do
+                  liftAff
+                    $ Room.send session.room "postMessage"
+                    $ A.fromString draft
 
-              put $ SetUp joinedState { draft = "" }
+                  put $ SetUp joinedState { draft = "" }
 
-        _ → pure unit
-    else pure unit
+          _ → pure unit
+      _ → pure unit
 
   Initialize → do
     state ← get
