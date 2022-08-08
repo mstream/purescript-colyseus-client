@@ -177,20 +177,32 @@ initialState _ = Joining "chat"
 render ∷ ∀ m. State → H.ComponentHTML Action () m
 render state = HH.div
   [ classes
-      [ Just "container", Just "h-screen", Just "mx-auto", Just "px-4" ]
+      [ Just "bg-slate-900"
+      , Just "h-screen"
+      , Just "text-slate-50"
+      , Just "w-screen"
+      ]
   ]
-  [ case state of
-      Joining roomName →
-        renderJoiningState roomName
+  [ HH.div
+      [ classes
+          [ Just "container"
+          , Just "h-full"
+          , Just "mx-auto"
+          ]
+      ]
+      [ case state of
+          Joining roomName →
+            renderJoiningState roomName
 
-      Joined userNameDraft _ →
-        renderJoinedState userNameDraft
+          Joined userNameDraft _ →
+            renderJoinedState userNameDraft
 
-      SetUp joinedState →
-        renderSetUpState joinedState
+          SetUp joinedState →
+            renderSetUpState joinedState
 
-      FailedToJoin reason →
-        renderFailedToJoinState reason
+          FailedToJoin reason →
+            renderFailedToJoinState reason
+      ]
   ]
   where
   renderJoiningState roomName =
@@ -200,7 +212,7 @@ render state = HH.div
     HH.div
       [ classes [ Just "border" ] ]
       [ HH.input
-          [ classes [ Just "w-full" ]
+          [ classes [ Just "bg-slate-800", Just "w-full" ]
           , HP.autofocus true
           , HP.placeholder "Enter your name here..."
           , HP.value userNameDraft
@@ -281,7 +293,8 @@ render state = HH.div
       , HH.div
           [ classes [ Just "border", Just "h-1/6" ] ]
           [ HH.textarea
-              [ classes [ Just "h-full", Just "w-full" ]
+              [ classes
+                  [ Just "bg-slate-800", Just "h-full", Just "w-full" ]
               , HP.autofocus true
               , HP.placeholder "New message here..."
               , HP.value draft
@@ -350,13 +363,19 @@ renderMessage users now (Message { author, text, timestamp }) =
             ]
         ]
         [ HH.p
-            [ classes [ Just "font-medium", Just "mr-1" ] ]
+            [ classes
+                [ Just "font-medium"
+                , Just "mr-1"
+                ]
+            ]
             [ HH.text case Map.lookup author users of
                 Just (User { name }) → name
                 Nothing → author
             ]
         , HH.p
-            [ classes [ Just "italic", Just "text-sm" ] ]
+            [ classes
+                [ Just "italic", Just "text-slate-500", Just "text-sm" ]
+            ]
             [ HH.text $ ago now timestamp ]
         ]
     , HH.p
