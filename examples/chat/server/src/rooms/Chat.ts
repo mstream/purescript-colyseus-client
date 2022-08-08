@@ -4,6 +4,7 @@ import { ChatRoomState } from "./schema/ChatRoomState";
 import { OnChangeNameMessageCommand, OnJoinCommand, OnLeaveCommand, OnPostMessageMessageCommand } from "./ChatCommands"
 
 const maxClients = 10
+const maxPosts = 100
 const patchRate = 1000
 
 export class ChatRoom extends Room<ChatRoomState> {
@@ -19,14 +20,14 @@ export class ChatRoom extends Room<ChatRoomState> {
     this.onMessage('changeName', (client, name) => {
       this.dispatcher.dispatch(
         new OnChangeNameMessageCommand(), 
-        {sessionId: client.sessionId, name}
+        {maxPosts, name, sessionId: client.sessionId}
       )
     })
 
     this.onMessage('postMessage', (client, text) => {
       this.dispatcher.dispatch(
         new OnPostMessageMessageCommand(), 
-        {sessionId: client.sessionId, text}
+        {maxPosts, sessionId: client.sessionId, text}
       )
     })
   }
@@ -34,14 +35,14 @@ export class ChatRoom extends Room<ChatRoomState> {
   onJoin (client: Client, options: any) {
     this.dispatcher.dispatch(
       new OnJoinCommand(),
-      {sessionId: client.sessionId}
+      {maxPosts, sessionId: client.sessionId}
     )
   }
 
   onLeave (client: Client, consented: boolean) {
     this.dispatcher.dispatch(
       new OnLeaveCommand(),
-      {sessionId: client.sessionId}
+      {maxPosts, sessionId: client.sessionId}
     )
   }
 

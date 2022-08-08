@@ -1,45 +1,75 @@
+import { ArraySchema } from '@colyseus/schema';
 import { Command } from '@colyseus/command'
 import { ChatRoom } from './Chat'
-import { Message, Notification, User } from './schema/ChatRoomState'
+import { Message, Notification, Post, User } from './schema/ChatRoomState'
 
-type OnChangeNameMessageCommandParams = {name: string, sessionId: string}
+type PostProducingCommand = {maxPosts : number}
+
+type OnChangeNameMessageCommandParams = 
+  PostProducingCommand & {name: string, sessionId: string}
 
 export class OnChangeNameMessageCommand extends Command<ChatRoom, OnChangeNameMessageCommandParams> {
-  execute({ name, sessionId }: OnChangeNameMessageCommandParams) {
+  execute({ maxPosts, name, sessionId }: OnChangeNameMessageCommandParams) {
     const user = this.state.users.get(sessionId)
     if (user) {
-      this.state.notifications.push(new Notification({text: `${user.name} has changed name to ${name}`}))
+      addPost({
+        maxPosts, 
+        post: new Notification({text: `${user.name} has changed name to ${name}`}), 
+        posts: this.state.posts,
+      })
       user.name = name
     }
   }
 }
 
-type OnJoinCommandParams = {sessionId: string}
+type OnJoinCommandParams = 
+  PostProducingCommand & {sessionId: string}
 
 export class OnJoinCommand extends Command<ChatRoom, OnJoinCommandParams> {
-  execute({ sessionId }: OnJoinCommandParams) {
+  execute({ maxPosts, sessionId }: OnJoinCommandParams) {
     const name = sessionId
-    this.state.notifications.push(new Notification({text: `${name} has joined`}))
+    addPost({
+        maxPosts, 
+        post: new Notification({text: `${name} has joined`}),
+        posts: this.state.posts,
+    })
     this.state.users.set(sessionId, new User({name}))
   }
 }
 
-type OnLeaveCommandParams = {sessionId: string}
+type OnLeaveCommandParams = 
+  PostProducingCommand & {sessionId: string}
 
 export class OnLeaveCommand extends Command<ChatRoom, OnLeaveCommandParams> {
-  execute({ sessionId }: OnLeaveCommandParams) {
+  execute({ maxPosts, sessionId }: OnLeaveCommandParams) {
     const user = this.state.users.get(sessionId)
     if (user) {
-      this.state.notifications.push(new Notification({text: `${user.name} has left`}))
+      addPost({
+          maxPosts, 
+          post: new Notification({text: `${user.name} has left`}),
+          posts: this.state.posts,
+      })
       this.state.users.delete(sessionId)
     }
   }
 }
 
-type OnPostMessageMessageCommandParams = {sessionId: string, text : string}
+type OnPostMessageMessageCommandParams = 
+  PostProducingCommand & {sessionId: string, text : string}
 
 export class OnPostMessageMessageCommand extends Command<ChatRoom, OnPostMessageMessageCommandParams> {
-  execute({ sessionId, text }: OnPostMessageMessageCommandParams) {
-    this.state.messages.push(new Message({author: sessionId, text}))
+  execute({ maxPosts, sessionId, text }: OnPostMessageMessageCommandParams) {
+    addPost({
+        maxPosts, 
+        post: new Message({author: sessionId, text}),
+        posts: this.state.posts,
+    })
   }
+}
+
+function addPost({maxPosts, post, posts}: PostProducingCommand & {post: Post; posts: ArraySchema<Post>}) {
+  posts.push(post)
+  while (posts.length > maxPosts) {
+    posts.shift()
+  } 
 }

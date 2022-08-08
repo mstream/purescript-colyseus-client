@@ -23,8 +23,6 @@
   , "strings"
   , "tailrec"
   , "transformers"
-  , "tuples"
-  , "unfoldable"
   , "web-dom"
   , "web-html"
   , "web-uievents"

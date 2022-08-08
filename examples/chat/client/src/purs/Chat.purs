@@ -28,15 +28,13 @@ import Data.Foldable (foldMap)
 import Data.Function.Uncurried (Fn1, runFn1)
 import Data.FunctorWithIndex (mapWithIndex)
 import Data.Int as Int
-import Data.List (List(..), (:))
+import Data.List (List(..))
 import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), maybe)
 import Data.String as String
 import Data.Time.Duration (Milliseconds(..))
-import Data.Tuple.Nested ((/\))
-import Data.Unfoldable (unfoldr)
 import Effect (Effect)
 import Effect.Aff (Aff, delay, forkAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -72,20 +70,43 @@ data State
 type JoinedState =
   { draft ∷ String
   , maxUsers ∷ Int
-  , messages ∷ List Message
-  , notifications ∷ List Notification
   , now ∷ Maybe Instant
+  , posts ∷ List Post
   , session ∷ SessionState
   , users ∷ Users
   }
+
+data Post
+  = Message MessagePayload
+  | Notification NotificationPayload
+
+type MessagePayload = PostPayload (author ∷ String)
+type NotificationPayload = PostPayload ()
+
+type PostPayload r =
+  { text ∷ String, timestamp ∷ Timestamp | r }
+
+instance DecodeJson Post where
+  decodeJson json = do
+    obj ← AD.decodeJson json
+    tag ← obj .: "tag"
+    text ← obj .: "text"
+    timestamp ← obj .: "timestamp"
+    case tag of
+      "message" → do
+        author ← obj .: "author"
+        pure $ Message { author, text, timestamp }
+      "notification" →
+        pure $ Notification { text, timestamp }
+      _ →
+        Left $ TypeMismatch $ "Unsupported tag: " <> tag
 
 type SessionState =
   { id ∷ String, room ∷ Room }
 
 type ChatRoomState =
   { maxUsers ∷ Int
-  , messages ∷ Array Message
-  , notifications ∷ Array Notification
+  , posts ∷ Array Post
   , users ∷ Object User
   }
 
@@ -98,27 +119,6 @@ instance DecodeJson User where
     obj ← AD.decodeJson json
     name ← obj .: "name"
     pure $ User { name }
-
-newtype Message =
-  Message { author ∷ String, text ∷ String, timestamp ∷ Timestamp }
-
-instance DecodeJson Message where
-  decodeJson json = do
-    obj ← AD.decodeJson json
-    author ← obj .: "author"
-    text ← obj .: "text"
-    timestamp ← obj .: "timestamp"
-    pure $ Message { author, text, timestamp }
-
-newtype Notification =
-  Notification { text ∷ String, timestamp ∷ Timestamp }
-
-instance DecodeJson Notification where
-  decodeJson json = do
-    obj ← AD.decodeJson json
-    text ← obj .: "text"
-    timestamp ← obj .: "timestamp"
-    pure $ Notification { text, timestamp }
 
 newtype Timestamp = Timestamp Instant
 
@@ -233,8 +233,7 @@ render state = HH.div
                 renderConversationPanel
                   joinedState.users
                   now
-                  joinedState.messages
-                  joinedState.notifications
+                  joinedState.posts
                   joinedState.draft
               Nothing →
                 renderLoading
@@ -269,7 +268,7 @@ render state = HH.div
           )
       ]
 
-  renderConversationPanel users now messages notifications draft =
+  renderConversationPanel users now posts draft =
     HH.div
       [ classes [ Just "flex", Just "flex-col", Just "h-full" ] ]
       [ HH.div
@@ -283,11 +282,10 @@ render state = HH.div
           ]
           ( ( Array.fromFoldable
                 $ HH.fromPlainHTML
-                    <$> renderMessagesAndNotifications
+                    <$> renderPosts
                       users
                       now
-                      messages
-                      notifications
+                      posts
             ) <> [ HH.div [ HP.ref conversationBottomRefLabel ] [] ]
           )
       , HH.div
@@ -317,40 +315,15 @@ renderUser currentSessionId sessionId (User { name }) =
     ]
     [ HH.text name ]
 
-renderMessagesAndNotifications
-  ∷ Users → Instant → List Message → List Notification → List PlainHTML
-renderMessagesAndNotifications users now messages notifications =
-  unfoldr f { messages, notifications }
-  where
-  f next = case next.messages, next.notifications of
-    Nil, Nil → Nothing
-    message : otherMessages, Nil →
-      Just
-        $ renderMessage users now message /\
-            { messages: otherMessages, notifications: Nil }
-    Nil, notification : otherNotifications →
-      Just
-        $ renderNotification now notification /\
-            { messages: Nil, notifications: otherNotifications }
-    message : otherMessages, notification : otherNotifications →
-      let
-        (Message { timestamp: messageTimestamp }) = message
-        (Notification { timestamp: notificationTimestamp }) =
-          notification
-      in
-        Just
-          if messageTimestamp < notificationTimestamp then
-            renderMessage users now message /\
-              { messages: otherMessages
-              , notifications: notification : otherNotifications
-              }
-          else renderNotification now notification /\
-            { messages: message : otherMessages
-            , notifications: otherNotifications
-            }
+renderPosts ∷ Users → Instant → List Post → List PlainHTML
+renderPosts users now = map case _ of
+  Message messagePayload →
+    renderMessage users now messagePayload
+  Notification notificationPayload →
+    renderNotification now notificationPayload
 
-renderMessage ∷ Users → Instant → Message → PlainHTML
-renderMessage users now (Message { author, text, timestamp }) =
+renderMessage ∷ Users → Instant → MessagePayload → PlainHTML
+renderMessage users now { author, text, timestamp } =
   HH.div
     [ classes
         [ Just "flex", Just "flex-col", Just "p-1" ]
@@ -383,8 +356,8 @@ renderMessage users now (Message { author, text, timestamp }) =
         [ HH.text text ]
     ]
 
-renderNotification ∷ Instant → Notification → PlainHTML
-renderNotification now (Notification { text, timestamp }) =
+renderNotification ∷ Instant → NotificationPayload → PlainHTML
+renderNotification now { text, timestamp } =
   HH.div
     [ classes
         [ Just "flex"
@@ -476,9 +449,8 @@ handleAction = case _ of
               ""
               { draft: ""
               , maxUsers: 0
-              , messages: Nil
-              , notifications: Nil
               , now: Nothing
+              , posts: Nil
               , session: { id: Room.getSessionId room, room }
               , users: Map.empty
               }
@@ -497,13 +469,10 @@ handleAction = case _ of
           updateJoinedState joinedState =
             joinedState
               { maxUsers = chatRoomState.maxUsers
-              , messages = List.fromFoldable
-                  $ chatRoomState.messages
-              , notifications = List.fromFoldable
-                  $ chatRoomState.notifications
-              , users = Map.fromFoldableWithIndex
-                  $ chatRoomState.users
+              , posts = List.fromFoldable chatRoomState.posts
+              , users = Map.fromFoldableWithIndex chatRoomState.users
               }
+
         state ← get
 
         put case state of

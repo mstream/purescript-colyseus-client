@@ -1,24 +1,29 @@
 import { ArraySchema, MapSchema, Schema, type } from '@colyseus/schema';
 
-export class Message extends Schema {
-  @type('string') author = ''
+export class Post extends Schema {
+  @type('string') tag = ''
   @type('string') text = ''
   @type('number') timestamp = Date.now()
 
-  constructor({author,text}: {author:string; text:string}) {
+  constructor({tag, text}: {tag: string, text:string}) {
     super()
-    this.author = author
+    this.tag = tag
     this.text = text
   }
 }
 
-export class Notification extends Schema {
-  @type('string') text = ''
-  @type('number') timestamp = Date.now()
-
+export class Notification extends Post {
   constructor({text}: {text:string}) {
-    super()
-    this.text = text
+    super({tag: 'notification', text})
+  }
+}
+
+export class Message extends Post {
+  @type('string') author = ''
+
+  constructor({author,text}: {author:string; text:string}) {
+    super({tag: 'message', text})
+    this.author = author
   }
 }
 
@@ -33,8 +38,7 @@ export class User extends Schema {
 
 export class ChatRoomState extends Schema {
   @type('number') maxUsers = 0
-  @type([Message]) messages = new ArraySchema<Message>()
-  @type([Notification]) notifications = new ArraySchema<Notification>()
+  @type([Post]) posts = new ArraySchema<Post>()
   @type({map: User}) users = new MapSchema<User>()
 
   constructor({maxUsers}: {maxUsers: number}) {
