@@ -8,56 +8,49 @@ import Colyseus.Client.Room (Room)
 import Colyseus.Client.Room as Room
 import Colyseus.Schema (Schema)
 import Colyseus.Schema as Schema
+import Component.UserList as UserList
 import Control.Monad.Error.Class (try)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Rec.Class (forever)
 import Control.Monad.State (get, put)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core as A
-import Data.Argonaut.Decode
-  ( class DecodeJson
-  , JsonDecodeError(..)
-  , (.:)
-  , (.:?)
-  )
 import Data.Argonaut.Decode as AD
 import Data.Array as Array
-import Data.DateTime.Instant (Instant, instant, unInstant)
+import Data.DateTime.Instant (Instant)
 import Data.Either (Either(..))
 import Data.Either.Nested (type (\/))
-import Data.Foldable (foldMap)
-import Data.Function.Uncurried (Fn1, runFn1)
-import Data.FunctorWithIndex (mapWithIndex)
-import Data.Int as Int
 import Data.List (List(..))
 import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), isNothing, maybe)
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Post (MessagePayload, NotificationPayload, Post(..))
 import Data.String as String
 import Data.Time.Duration (Milliseconds(..))
-import Effect (Effect)
+import Data.Timestamp as Timestamp
+import Data.User (User(..))
 import Effect.Aff (Aff, delay, forkAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Console as Console
 import Effect.Now (now)
 import Foreign.Object (Object)
-import Halogen (ClassName(..), HalogenM)
+import Halogen (HalogenM)
 import Halogen as H
-import Halogen.HTML (IProp, PlainHTML)
+import Halogen.HTML (PlainHTML)
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Query.Event (eventListener)
 import Halogen.Subscription as HS
-import Web.DOM (Element)
+import Type.Proxy (Proxy(..))
+import Utils (classes, getHostname, getProtocol, scrollIntoView)
 import Web.DOM.Element (scrollHeight, setScrollTop)
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (toEventTarget)
 import Web.HTML.HTMLElement (offsetHeight, toElement)
-import Web.HTML.Location (hostname, protocol)
-import Web.HTML.Window (document, location)
+import Web.HTML.Window (document)
 import Web.UIEvent.KeyboardEvent (KeyboardEvent)
 import Web.UIEvent.KeyboardEvent as KE
 import Web.UIEvent.KeyboardEvent.EventTypes as KET
@@ -77,30 +70,7 @@ type JoinedState =
   , users ∷ Users
   }
 
-data Post
-  = Message MessagePayload
-  | Notification NotificationPayload
-
-type MessagePayload = PostPayload (author ∷ String)
-type NotificationPayload = PostPayload ()
-
-type PostPayload r =
-  { text ∷ String, timestamp ∷ Timestamp | r }
-
-instance DecodeJson Post where
-  decodeJson json = do
-    obj ← AD.decodeJson json
-    tag ← obj .: "tag"
-    text ← obj .: "text"
-    timestamp ← obj .: "timestamp"
-    case tag of
-      "message" → do
-        author ← obj .: "author"
-        pure $ Message { author, text, timestamp }
-      "notification" →
-        pure $ Notification { text, timestamp }
-      _ →
-        Left $ TypeMismatch $ "Unsupported tag: " <> tag
+type Users = Map String User
 
 type SessionState =
   { id ∷ String, room ∷ Room }
@@ -111,56 +81,16 @@ type ChatRoomState =
   , users ∷ Object User
   }
 
-type Users = Map String User
-
-newtype User = User { leftAt ∷ Maybe Timestamp, name ∷ String }
-
-instance DecodeJson User where
-  decodeJson json = do
-    obj ← AD.decodeJson json
-    leftAt ← obj .:? "leftAt"
-    name ← obj .: "name"
-    pure $ User { leftAt, name }
-
-newtype Timestamp = Timestamp Instant
-
-derive newtype instance Show Timestamp
-derive newtype instance Eq Timestamp
-derive newtype instance Ord Timestamp
-
-instance DecodeJson Timestamp where
-  decodeJson json = do
-    x ← AD.decodeJson json
-    case instant $ Milliseconds x of
-      Just ins → Right $ Timestamp $ ins
-      Nothing → Left $ UnexpectedValue json
-
-ago ∷ Instant → Timestamp → String
-ago now timestamp =
-  units <> " ago"
-  where
-  units = case secondsAgo now timestamp of
-    x
-      | x < 60 → "seconds"
-      | x < 3600 → "minutes"
-      | otherwise → "hours"
-
-secondsAgo ∷ Instant → Timestamp → Int
-secondsAgo now (Timestamp ins) =
-  let
-    (Milliseconds t0) = unInstant ins
-    (Milliseconds t1) = unInstant now
-    diff = t1 - t0
-  in
-    Int.round $ diff / 1000.0
-
 data Action
   = HandleKey KeyboardEvent
+  | HandleUserList UserList.Output
   | Initialize
   | ReceiveMessage Json
   | ReceiveRoomStateUpdate Schema
   | UpdateCurrentTime Instant
   | UpdateDraft String
+
+type Slots = (userList ∷ ∀ q. H.Slot q UserList.Output Unit)
 
 component ∷ ∀ q i o m. MonadAff m ⇒ H.Component q i o m
 component =
@@ -176,7 +106,7 @@ component =
 initialState ∷ ∀ i. i → State
 initialState _ = Joining "chat"
 
-render ∷ ∀ m. State → H.ComponentHTML Action () m
+render ∷ ∀ m. MonadAff m ⇒ State → H.ComponentHTML Action Slots m
 render state = HH.div
   [ classes
       [ Just "bg-slate-900"
@@ -242,37 +172,20 @@ render state = HH.div
           ]
       , HH.div
           [ classes [ Just "h-full", Just "p-1", Just "w-1/5" ] ]
-          [ renderUserPanel
-              joinedState.maxUsers
-              joinedState.session.id
-              joinedState.users
+          [ HH.slot
+              (Proxy ∷ _ "userList")
+              unit
+              UserList.component
+              { maxUsers: joinedState.maxUsers
+              , sessionId: joinedState.session.id
+              , users: joinedState.users
+              }
+              HandleUserList
           ]
       ]
 
   renderLoading =
     HH.text "Loading..."
-
-  renderUserPanel maxUsers sessionId users =
-    let
-      activeUsers =
-        users # Map.filter \(User { leftAt }) → isNothing leftAt
-    in
-      HH.div
-        [ classes [ Just "flex", Just "flex-col" ] ]
-        [ HH.h2_
-            [ HH.text
-                $ "Users ("
-                    <> (show $ Map.size activeUsers)
-                    <> "/"
-                    <> show maxUsers
-                    <> ")"
-            ]
-        , HH.div
-            [ classes [ Just "flex", Just "flex-col" ] ]
-            ( Array.fromFoldable
-                $ HH.fromPlainHTML <$> renderUsers sessionId activeUsers
-            )
-        ]
 
   renderConversationPanel users now posts draft =
     HH.div
@@ -306,20 +219,6 @@ render state = HH.div
               ]
           ]
       ]
-
-renderUsers ∷ String → Users → List PlainHTML
-renderUsers sessionId users =
-  Map.values $ renderUser sessionId `mapWithIndex` users
-
-renderUser ∷ String → String → User → PlainHTML
-renderUser currentSessionId sessionId (User { name }) =
-  HH.div
-    [ classes
-        [ if sessionId == currentSessionId then Just "font-semibold"
-          else Nothing
-        ]
-    ]
-    [ HH.text name ]
 
 renderPosts ∷ Users → Instant → List Post → List PlainHTML
 renderPosts users now = map case _ of
@@ -355,7 +254,7 @@ renderMessage users now { author, text, timestamp } =
             [ classes
                 [ Just "italic", Just "text-slate-500", Just "text-sm" ]
             ]
-            [ HH.text $ ago now timestamp ]
+            [ HH.text $ Timestamp.ago now timestamp ]
         ]
     , HH.p
         [ classes [ Just "ml-1", Just "whitespace-pre-wrap" ] ]
@@ -377,7 +276,7 @@ renderNotification now { text, timestamp } =
         [ classes [ Just "flex", Just "flex-row" ] ]
         [ HH.p
             [ classes [ Just "italic", Just "text-xs" ] ]
-            [ HH.text $ ago now timestamp ]
+            [ HH.text $ Timestamp.ago now timestamp ]
         ]
     , HH.p
         [ classes [ Just "ml-1", Just "whitespace-pre-wrap" ] ]
@@ -385,7 +284,7 @@ renderNotification now { text, timestamp } =
     ]
 
 handleAction
-  ∷ ∀ o m. MonadAff m ⇒ Action → H.HalogenM State Action () o m Unit
+  ∷ ∀ o m. MonadAff m ⇒ Action → H.HalogenM State Action Slots o m Unit
 handleAction = case _ of
   HandleKey keyEvt →
     case KE.key keyEvt of
@@ -420,6 +319,23 @@ handleAction = case _ of
 
           _ → pure unit
       _ → pure unit
+
+  HandleUserList output →
+    case output of
+      UserList.NameEditRequested → do
+        state ← get
+
+        case state of
+          SetUp joinedState →
+            put $ Joined
+              ( fromMaybe ""
+                  $ map (\(User { name }) → name)
+                  $ Map.lookup joinedState.session.id joinedState.users
+              )
+              joinedState
+
+          _ →
+            pure unit
 
   Initialize → do
     state ← get
@@ -530,16 +446,6 @@ connectToRoom roomName = do
     (Colyseus.makeClient { endpoint })
     { roomName, options: A.jsonEmptyObject }
 
-getHostname ∷ Aff String
-getHostname = liftEffect $ window >>= location >>= hostname
-
-getProtocol ∷ Aff String
-getProtocol = liftEffect $ window >>= location >>= protocol
-
-classes ∷ ∀ i r. Array (Maybe String) → IProp (class ∷ String | r) i
-classes =
-  HP.classes <<< (foldMap $ maybe [] (Array.singleton <<< ClassName))
-
 scrollConversationWindowToBottom
   ∷ ∀ state action slots output m
   . MonadEffect m
@@ -563,7 +469,3 @@ scrollConversationWindowToBottom = do
 conversationBottomRefLabel ∷ H.RefLabel
 conversationBottomRefLabel = H.RefLabel "conversation-bottom"
 
-scrollIntoView ∷ Element → Effect Unit
-scrollIntoView = runFn1 scrollIntoViewImpl
-
-foreign import scrollIntoViewImpl ∷ Fn1 Element (Effect Unit)
