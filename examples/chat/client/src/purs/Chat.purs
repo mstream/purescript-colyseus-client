@@ -27,6 +27,7 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Post (MessagePayload, NotificationPayload, Post(..))
 import Data.String as String
+import Data.Text (Text(..), TextSegment(..))
 import Data.Time.Duration (Milliseconds(..))
 import Data.Timestamp as Timestamp
 import Data.User (User(..))
@@ -225,7 +226,7 @@ renderPosts users now = map case _ of
   Message messagePayload →
     renderMessage users now messagePayload
   Notification notificationPayload →
-    renderNotification now notificationPayload
+    renderNotification users now notificationPayload
 
 renderMessage ∷ Users → Instant → MessagePayload → PlainHTML
 renderMessage users now { author, text, timestamp } =
@@ -257,12 +258,13 @@ renderMessage users now { author, text, timestamp } =
             [ HH.text $ Timestamp.ago now timestamp ]
         ]
     , HH.p
-        [ classes [ Just "ml-1", Just "whitespace-pre-wrap" ] ]
-        [ HH.text text ]
+        [ classes [ Just "ml-1" ] ]
+        [ renderText users text ]
     ]
 
-renderNotification ∷ Instant → NotificationPayload → PlainHTML
-renderNotification now { text, timestamp } =
+renderNotification
+  ∷ Users → Instant → NotificationPayload → PlainHTML
+renderNotification users now { text, timestamp } =
   HH.div
     [ classes
         [ Just "flex"
@@ -279,9 +281,30 @@ renderNotification now { text, timestamp } =
             [ HH.text $ Timestamp.ago now timestamp ]
         ]
     , HH.p
-        [ classes [ Just "ml-1", Just "whitespace-pre-wrap" ] ]
-        [ HH.text $ text ]
+        [ classes [ Just "ml-1" ] ]
+        [ renderText users text ]
     ]
+
+renderText ∷ Users → Text → PlainHTML
+renderText users (Text textSegments) =
+  HH.p
+    [ classes [ Just "whitespace-pre-wrap" ] ]
+    (Array.fromFoldable $ renderTextSegment <$> textSegments)
+  where
+  renderTextSegment = case _ of
+    PlainText s →
+      HH.i_ [ HH.text s ]
+
+    UserReference s → case Map.lookup s users of
+      Just (User { name }) →
+        HH.i
+          [ classes [ Just "text-blue-500" ] ]
+          [ HH.text name ]
+
+      Nothing →
+        HH.i
+          [ classes [ Just "text-slate-500" ] ]
+          [ HH.text s ]
 
 handleAction
   ∷ ∀ o m. MonadAff m ⇒ Action → H.HalogenM State Action Slots o m Unit
@@ -333,6 +356,17 @@ handleAction = case _ of
                   $ Map.lookup joinedState.session.id joinedState.users
               )
               joinedState
+
+          _ →
+            pure unit
+
+      UserList.UserMentioned sessionId → do
+        state ← get
+
+        case state of
+          SetUp joinedState →
+            put $ SetUp joinedState
+              { draft = joinedState.draft <> "@" <> sessionId }
 
           _ →
             pure unit

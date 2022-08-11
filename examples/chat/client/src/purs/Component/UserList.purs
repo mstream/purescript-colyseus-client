@@ -20,13 +20,14 @@ type State = Input
 
 type Input = { maxUsers ∷ Int, sessionId ∷ String, users ∷ Users }
 
-data Output = NameEditRequested
+data Output = NameEditRequested | UserMentioned String
 
 type Users = Map String User
 
 data Action
   = EditName
   | Initialize
+  | MentionUser String
   | Receive Input
 
 component ∷ ∀ q m. MonadAff m ⇒ H.Component q Input Output m
@@ -77,26 +78,29 @@ render state =
         [ classes
             [ if isOwn then Just "font-semibold"
               else Nothing
+            , Just "p-1"
             ]
         ]
-        [ HH.text name
-        , if isOwn then
-            HH.button
-              [ classes
-                  [ Just "aspect-square"
-                  , Just "bg-sky-500"
-                  , Just "h-full"
-                  , Just "hover:bg-sky-400"
-                  , Just "ml-1"
-                  , Just "rounded"
-                  ]
-              , HE.onClick $ const EditName
-              , HP.type_ HP.ButtonButton
-              ]
-              [ HH.text "✎" ]
+        [ if isOwn then
+            renderButton "✎" $ const EditName
           else
-            HH.text ""
+            renderButton "@" $ const $ MentionUser sessionId
+        , HH.text name
         ]
+
+  renderButton label handler = HH.button
+    [ classes
+        [ Just "aspect-square"
+        , Just "bg-sky-500"
+        , Just "h-full"
+        , Just "hover:bg-sky-400"
+        , Just "mr-1"
+        , Just "rounded"
+        ]
+    , HE.onClick handler
+    , HP.type_ HP.ButtonButton
+    ]
+    [ HH.text label ]
 
 handleAction
   ∷ ∀ m. MonadAff m ⇒ Action → H.HalogenM State Action () Output m Unit
@@ -105,5 +109,7 @@ handleAction = case _ of
     H.raise NameEditRequested
   Initialize →
     pure unit
+  MentionUser sessionId →
+    H.raise $ UserMentioned sessionId
   Receive input →
     put input

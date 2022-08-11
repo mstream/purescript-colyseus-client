@@ -6,6 +6,7 @@
   , "arrays"
   , "colyseus-client"
   , "console"
+  , "control"
   , "datetime"
   , "effect"
   , "either"
@@ -20,6 +21,8 @@
   , "now"
   , "ordered-collections"
   , "prelude"
+  , "spec"
+  , "string-parsers"
   , "strings"
   , "tailrec"
   , "transformers"
@@ -30,5 +33,5 @@
 , packages =
     ../../../packages.dhall
   with colyseus-client = ../../../spago.dhall as Location
-, sources = [ "src/purs/**/*.purs" ]
+, sources = [ "src/purs/**/*.purs", "test/purs/**/*.purs" ]
 }

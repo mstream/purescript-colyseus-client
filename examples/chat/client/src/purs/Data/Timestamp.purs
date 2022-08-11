@@ -29,9 +29,10 @@ ago now timestamp =
   where
   units = case secondsAgo now timestamp of
     x
-      | x < 60 → "seconds"
-      | x < 3600 → "minutes"
-      | otherwise → "hours"
+      | x < 120 → "seconds"
+      | x < 7200 → "minutes"
+      | x < 172800 → "hours"
+      | otherwise → "days"
 
 secondsAgo ∷ Instant → Timestamp → Int
 secondsAgo now (Timestamp ins) =
@@ -41,3 +42,4 @@ secondsAgo now (Timestamp ins) =
     diff = t1 - t0
   in
     Int.round $ diff / 1000.0
+

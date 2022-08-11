@@ -14,30 +14,43 @@ import Data.Argonaut.Decode
   )
 import Data.Argonaut.Decode as AD
 import Data.Either (Either(..))
+import Data.Generic.Rep (class Generic)
+import Data.Show.Generic (genericShow)
+import Data.Text (Text, text)
 import Data.Timestamp (Timestamp)
+import StringParser as SP
 
 data Post
   = Message MessagePayload
   | Notification NotificationPayload
 
+derive instance Generic Post _
+
+instance Show Post where
+  show = genericShow
+
 type MessagePayload = PostPayload (author ∷ String)
 type NotificationPayload = PostPayload ()
 
 type PostPayload r =
-  { text ∷ String, timestamp ∷ Timestamp | r }
+  { text ∷ Text, timestamp ∷ Timestamp | r }
 
 instance DecodeJson Post where
   decodeJson json = do
     obj ← AD.decodeJson json
+    rawText ← obj .: "text"
     tag ← obj .: "tag"
-    text ← obj .: "text"
     timestamp ← obj .: "timestamp"
-    case tag of
-      "message" → do
-        author ← obj .: "author"
-        pure $ Message { author, text, timestamp }
-      "notification" →
-        pure $ Notification { text, timestamp }
-      _ →
-        Left $ TypeMismatch $ "Unsupported tag: " <> tag
+    case SP.runParser text rawText of
+      Left parserError →
+        Left $ TypeMismatch $ SP.printParserError parserError
+      Right text →
+        case tag of
+          "message" → do
+            author ← obj .: "author"
+            pure $ Message { author, text, timestamp }
+          "notification" →
+            pure $ Notification { text, timestamp }
+          _ →
+            Left $ TypeMismatch $ "Unsupported tag: " <> tag
 
