@@ -1,4 +1,4 @@
-module Chat where
+module Chat (component) where
 
 import Prelude
 
@@ -15,21 +15,29 @@ import Control.Monad.Rec.Class (forever)
 import Control.Monad.State (get, put)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core as A
+import Data.Argonaut.Decode
+  ( class DecodeJson
+  , JsonDecodeError(..)
+  , (.:)
+  )
 import Data.Argonaut.Decode as AD
 import Data.Array as Array
 import Data.DateTime.Instant (Instant)
 import Data.Either (Either(..))
 import Data.Either.Nested (type (\/))
+import Data.FoldableWithIndex (foldWithIndexM)
 import Data.List (List(..))
-import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Post (MessagePayload, NotificationPayload, Post(..))
 import Data.String as String
+import Data.String.NonEmpty (NonEmptyString)
+import Data.String.NonEmpty as NEString
 import Data.Text (Text(..), TextSegment(..))
 import Data.Time.Duration (Milliseconds(..))
 import Data.Timestamp as Timestamp
+import Data.Tuple.Nested ((/\))
 import Data.User (User(..))
 import Effect.Aff (Aff, delay, forkAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -45,6 +53,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Query.Event (eventListener)
 import Halogen.Subscription as HS
+import Pictogram (emojis)
 import Type.Proxy (Proxy(..))
 import Utils (classes, getHostname, getProtocol, scrollIntoView)
 import Web.DOM.Element (scrollHeight, setScrollTop)
@@ -63,24 +72,40 @@ data State
   | FailedToJoin String
 
 type JoinedState =
-  { draft ∷ String
-  , maxUsers ∷ Int
+  { chatRoom ∷ ChatRoomState
+  , draft ∷ String
   , now ∷ Maybe Instant
-  , posts ∷ List Post
   , session ∷ SessionState
+  }
+
+type Users = Map NonEmptyString User
+
+type SessionState =
+  { id ∷ NonEmptyString, room ∷ Room }
+
+newtype ChatRoomState = ChatRoomState
+  { maxUsers ∷ Int
+  , posts ∷ List Post
   , users ∷ Users
   }
 
-type Users = Map String User
+derive newtype instance Show ChatRoomState
 
-type SessionState =
-  { id ∷ String, room ∷ Room }
-
-type ChatRoomState =
-  { maxUsers ∷ Int
-  , posts ∷ Array Post
-  , users ∷ Object User
-  }
+instance DecodeJson ChatRoomState where
+  decodeJson json = do
+    obj ← AD.decodeJson json
+    maxUsers ← obj .: "maxUsers"
+    posts ← obj .: "posts"
+    users ← objectToUsers =<< obj .: "users"
+    pure $ ChatRoomState { maxUsers, posts, users }
+    where
+    objectToUsers ∷ Object User → JsonDecodeError \/ Users
+    objectToUsers = Map.empty # foldWithIndexM \k acc v →
+      case NEString.fromString k of
+        Just nes →
+          Right $ Map.insert nes v acc
+        Nothing →
+          Left $ TypeMismatch "session ID must not be empty"
 
 data Action
   = HandleKey KeyboardEvent
@@ -156,18 +181,23 @@ render state = HH.div
   renderFailedToJoinState reason =
     HH.text $ "Failed to join the room: " <> reason
 
-  renderSetUpState joinedState =
+  renderSetUpState
+    { chatRoom: (ChatRoomState chatRoomState)
+    , draft
+    , now: mbNow
+    , session
+    } =
     HH.div
       [ classes [ Just "flex", Just "flex-row", Just "h-full" ] ]
       [ HH.div
           [ classes [ Just "h-full", Just "p-1", Just "w-4/5" ] ]
-          [ case joinedState.now of
+          [ case mbNow of
               Just now →
                 renderConversationPanel
-                  joinedState.users
+                  chatRoomState.users
                   now
-                  joinedState.posts
-                  joinedState.draft
+                  chatRoomState.posts
+                  draft
               Nothing →
                 renderLoading
           ]
@@ -177,9 +207,9 @@ render state = HH.div
               (Proxy ∷ _ "userList")
               unit
               UserList.component
-              { maxUsers: joinedState.maxUsers
-              , sessionId: joinedState.session.id
-              , users: joinedState.users
+              { maxUsers: chatRoomState.maxUsers
+              , sessionId: session.id
+              , users: chatRoomState.users
               }
               HandleUserList
           ]
@@ -248,8 +278,11 @@ renderMessage users now { author, text, timestamp } =
                 ]
             ]
             [ HH.text case Map.lookup author users of
-                Just (User { name }) → name
-                Nothing → author
+                Just (User { name }) →
+                  name
+
+                Nothing →
+                  NEString.toString author
             ]
         , HH.p
             [ classes
@@ -292,19 +325,26 @@ renderText users (Text textSegments) =
     (Array.fromFoldable $ renderTextSegment <$> textSegments)
   where
   renderTextSegment = case _ of
-    PlainText s →
-      HH.i_ [ HH.text s ]
+    Pictogram nes →
+      HH.span_
+        [ HH.text $ fromMaybe
+            (":" <> NEString.toString nes)
+            (Map.lookup nes emojis)
+        ]
 
-    UserReference s → case Map.lookup s users of
+    PlainText nes →
+      HH.span_ [ HH.text $ NEString.toString nes ]
+
+    UserReference nes → case Map.lookup nes users of
       Just (User { name }) →
-        HH.i
+        HH.span
           [ classes [ Just "text-blue-500" ] ]
           [ HH.text name ]
 
       Nothing →
-        HH.i
+        HH.span
           [ classes [ Just "text-slate-500" ] ]
-          [ HH.text s ]
+          [ HH.text $ NEString.toString nes ]
 
 handleAction
   ∷ ∀ o m. MonadAff m ⇒ Action → H.HalogenM State Action Slots o m Unit
@@ -349,11 +389,13 @@ handleAction = case _ of
         state ← get
 
         case state of
-          SetUp joinedState →
+          SetUp
+            joinedState@
+              { chatRoom: (ChatRoomState chatRoomState), session } →
             put $ Joined
               ( fromMaybe ""
                   $ map (\(User { name }) → name)
-                  $ Map.lookup joinedState.session.id joinedState.users
+                  $ Map.lookup session.id chatRoomState.users
               )
               joinedState
 
@@ -366,7 +408,11 @@ handleAction = case _ of
         case state of
           SetUp joinedState →
             put $ SetUp joinedState
-              { draft = joinedState.draft <> "@" <> sessionId }
+              { draft =
+                  joinedState.draft
+                    <> "@"
+                    <> NEString.toString sessionId
+              }
 
           _ →
             pure unit
@@ -403,12 +449,11 @@ handleAction = case _ of
               (map HandleKey <<< KE.fromEvent)
             put $ Joined
               ""
-              { draft: ""
-              , maxUsers: 0
+              { chatRoom: ChatRoomState
+                  { maxUsers: 0, posts: Nil, users: Map.empty }
+              , draft: ""
               , now: Nothing
-              , posts: Nil
               , session: { id: Room.getSessionId room, room }
-              , users: Map.empty
               }
       _ → pure unit
 
@@ -420,51 +465,56 @@ handleAction = case _ of
         liftEffect $ Console.error $
           "Could not decode the chat room state: "
             <> AD.printJsonDecodeError decodeError
-      Right (chatRoomState ∷ ChatRoomState) → do
-        let
-          updateJoinedState joinedState =
-            joinedState
-              { maxUsers = chatRoomState.maxUsers
-              , posts = List.fromFoldable chatRoomState.posts
-              , users = Map.fromFoldableWithIndex chatRoomState.users
-              }
 
-        state ← get
+      Right (chatRoom ∷ ChatRoomState) →
+        do
+          liftEffect $ Console.info $ show chatRoom
+          let
+            updateJoinedState joinedState =
+              joinedState { chatRoom = chatRoom }
 
-        put case state of
-          Joined userNameDraft joinedState →
-            Joined userNameDraft $ updateJoinedState joinedState
-          SetUp joinedState →
-            SetUp $ updateJoinedState joinedState
-          otherState →
-            otherState
+          state ← get
 
-        scrollConversationWindowToBottom
+          case state of
+            Joined userNameDraft joinedState →
+              put $ Joined userNameDraft $ updateJoinedState joinedState
+
+            SetUp joinedState →
+              put $ SetUp $ updateJoinedState joinedState
+
+            _ →
+              pure unit
+
+          scrollConversationWindowToBottom
 
   UpdateCurrentTime ins → do
     let
       updateJoinedState joinedState =
         joinedState { now = Just ins }
+
     state ← get
-    put case state of
+
+    case state of
       Joined userNameDraft joinedState →
-        Joined userNameDraft $ updateJoinedState joinedState
+        put $ Joined userNameDraft $ updateJoinedState joinedState
+
       SetUp joinedState →
-        SetUp $ updateJoinedState joinedState
-      otherState →
-        otherState
+        put $ SetUp $ updateJoinedState joinedState
+
+      _ → pure unit
 
   UpdateDraft s → do
     state ← get
-    put case state of
+
+    case state of
       Joined _ joinedState →
-        Joined s joinedState
+        put $ Joined s joinedState
 
       SetUp joinedState →
-        SetUp joinedState { draft = s }
+        put $ SetUp joinedState { draft = s }
 
-      otherState →
-        otherState
+      _ →
+        pure unit
 
 connectToRoom ∷ String → Aff (JoinError \/ Room)
 connectToRoom roomName = do

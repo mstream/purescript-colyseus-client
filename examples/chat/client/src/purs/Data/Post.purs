@@ -16,6 +16,7 @@ import Data.Argonaut.Decode as AD
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
 import Data.Show.Generic (genericShow)
+import Data.String.NonEmpty (NonEmptyString)
 import Data.Text (Text, text)
 import Data.Timestamp (Timestamp)
 import StringParser as SP
@@ -29,7 +30,7 @@ derive instance Generic Post _
 instance Show Post where
   show = genericShow
 
-type MessagePayload = PostPayload (author ∷ String)
+type MessagePayload = PostPayload (author ∷ NonEmptyString)
 type NotificationPayload = PostPayload ()
 
 type PostPayload r =

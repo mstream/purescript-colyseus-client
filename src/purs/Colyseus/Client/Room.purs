@@ -16,8 +16,11 @@ import Colyseus.Schema (Schema)
 import Control.Promise (Promise, toAffE)
 import Data.Argonaut.Core (Json)
 import Data.Function.Uncurried (Fn1, Fn2, Fn3, runFn1, runFn2, runFn3)
+import Data.String.NonEmpty (NonEmptyString)
+import Data.String.NonEmpty as NEString
 import Effect (Effect)
 import Effect.Aff (Aff)
+import Partial.Unsafe (unsafePartial)
 
 type State = Schema
 
@@ -29,11 +32,13 @@ addStateChangeListener ∷ Room → (State → Effect Unit) → Aff Unit
 addStateChangeListener room listener =
   toAffE $ runFn2 addStateChangeListenerImpl room listener
 
-getId ∷ Room → String
-getId = runFn1 getIdImpl
+getId ∷ Room → NonEmptyString
+getId =
+  unsafePartial $ NEString.unsafeFromString <<< runFn1 getIdImpl
 
-getSessionId ∷ Room → String
-getSessionId = runFn1 getSessionIdImpl
+getSessionId ∷ Room → NonEmptyString
+getSessionId =
+  unsafePartial $ NEString.unsafeFromString <<< runFn1 getSessionIdImpl
 
 getState ∷ Room → String
 getState = runFn1 getStateImpl

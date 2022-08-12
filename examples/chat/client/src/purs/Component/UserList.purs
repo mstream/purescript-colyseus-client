@@ -8,6 +8,7 @@ import Data.FunctorWithIndex (mapWithIndex)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), isNothing)
+import Data.String.NonEmpty (NonEmptyString)
 import Data.User (User(..))
 import Effect.Aff.Class (class MonadAff)
 import Halogen as H
@@ -18,16 +19,17 @@ import Utils (classes)
 
 type State = Input
 
-type Input = { maxUsers ∷ Int, sessionId ∷ String, users ∷ Users }
+type Input =
+  { maxUsers ∷ Int, sessionId ∷ NonEmptyString, users ∷ Users }
 
-data Output = NameEditRequested | UserMentioned String
+data Output = NameEditRequested | UserMentioned NonEmptyString
 
-type Users = Map String User
+type Users = Map NonEmptyString User
 
 data Action
   = EditName
   | Initialize
-  | MentionUser String
+  | MentionUser NonEmptyString
   | Receive Input
 
 component ∷ ∀ q m. MonadAff m ⇒ H.Component q Input Output m
@@ -63,7 +65,8 @@ render state =
           ]
       , HH.div
           [ classes [ Just "flex", Just "flex-col" ] ]
-          ( Array.fromFoldable $ renderUsers state.sessionId activeUsers
+          ( Array.fromFoldable
+              $ renderUsers state.sessionId activeUsers
           )
       ]
   where
