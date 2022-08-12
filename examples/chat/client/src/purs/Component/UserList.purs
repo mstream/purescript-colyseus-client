@@ -81,29 +81,55 @@ render state =
         [ classes
             [ if isOwn then Just "font-semibold"
               else Nothing
+            , Just "flex"
+            , Just "flex-row"
+            , Just "items-center"
             , Just "p-1"
             ]
         ]
         [ if isOwn then
-            renderButton "✎" $ const EditName
+            renderButton "change name" "✎"
+              $ const EditName
           else
-            renderButton "@" $ const $ MentionUser sessionId
+            renderButton "mention user" "@"
+              $ const
+              $ MentionUser sessionId
         , HH.text name
         ]
 
-  renderButton label handler = HH.button
-    [ classes
-        [ Just "aspect-square"
-        , Just "bg-sky-500"
-        , Just "h-full"
-        , Just "hover:bg-sky-400"
-        , Just "mr-1"
-        , Just "rounded"
-        ]
-    , HE.onClick handler
-    , HP.type_ HP.ButtonButton
-    ]
-    [ HH.text label ]
+  renderButton description label handler =
+    HH.div
+      [ classes [ Just "group", Just "h-6" ] ]
+      [ HH.span
+          [ classes
+              [ Just "absolute"
+              , Just "bg-slate-800"
+              , Just "font-normal"
+              , Just "group-hover:visible"
+              , Just "invisible"
+              , Just "mt-4"
+              , Just "opacity-50"
+              , Just "rounded-lg"
+              , Just "shadow-lg"
+              , Just "tooltip"
+              , Just "z-50"
+              ]
+          ]
+          [ HH.text description ]
+      , HH.button
+          [ classes
+              [ Just "aspect-square"
+              , Just "bg-sky-500"
+              , Just "h-full"
+              , Just "hover:bg-sky-400"
+              , Just "mr-1"
+              , Just "rounded"
+              ]
+          , HE.onClick handler
+          , HP.type_ HP.ButtonButton
+          ]
+          [ HH.text label ]
+      ]
 
 handleAction
   ∷ ∀ m. MonadAff m ⇒ Action → H.HalogenM State Action () Output m Unit

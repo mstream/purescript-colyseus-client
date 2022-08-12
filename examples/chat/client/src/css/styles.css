@@ -2,6 +2,4 @@
 @tailwind components;
 @tailwind utilities;
 
-.token.operator {
-    background: none;
-}
+
