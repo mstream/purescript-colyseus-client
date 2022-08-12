@@ -25,8 +25,9 @@ import Data.Array as Array
 import Data.DateTime.Instant (Instant)
 import Data.Either (Either(..))
 import Data.Either.Nested (type (\/))
-import Data.FoldableWithIndex (foldWithIndexM)
-import Data.List (List(..))
+import Data.FoldableWithIndex (foldMapWithIndex, foldWithIndexM)
+import Data.List (List(..), (:))
+import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
@@ -36,8 +37,8 @@ import Data.String.NonEmpty (NonEmptyString)
 import Data.String.NonEmpty as NEString
 import Data.Text (Text(..), TextSegment(..))
 import Data.Time.Duration (Milliseconds(..))
+import Data.Timestamp (Timestamp)
 import Data.Timestamp as Timestamp
-import Data.Tuple.Nested ((/\))
 import Data.User (User(..))
 import Effect.Aff (Aff, delay, forkAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -74,10 +75,12 @@ data State
 type JoinedState =
   { chatRoom ∷ ChatRoomState
   , draft ∷ String
+  , lastTimeTyped ∷ LastTimeTyped
   , now ∷ Maybe Instant
   , session ∷ SessionState
   }
 
+type LastTimeTyped = Map NonEmptyString Timestamp
 type Users = Map NonEmptyString User
 
 type SessionState =
@@ -111,10 +114,12 @@ data Action
   = HandleKey KeyboardEvent
   | HandleUserList UserList.Output
   | Initialize
-  | ReceiveMessage Json
+  | ReceiveRoomMessage RoomMessageType Json
   | ReceiveRoomStateUpdate Schema
   | UpdateCurrentTime Instant
   | UpdateDraft String
+
+data RoomMessageType = IsTyping
 
 type Slots = (userList ∷ ∀ q. H.Slot q UserList.Output Unit)
 
@@ -184,6 +189,7 @@ render state = HH.div
   renderSetUpState
     { chatRoom: (ChatRoomState chatRoomState)
     , draft
+    , lastTimeTyped
     , now: mbNow
     , session
     } =
@@ -194,6 +200,8 @@ render state = HH.div
           [ case mbNow of
               Just now →
                 renderConversationPanel
+                  session.id
+                  lastTimeTyped
                   chatRoomState.users
                   now
                   chatRoomState.posts
@@ -202,7 +210,7 @@ render state = HH.div
                 renderLoading
           ]
       , HH.div
-          [ classes [ Just "h-full", Just "p-1", Just "w-1/5" ] ]
+          [ classes [ Just "h-full", Just "w-1/5" ] ]
           [ HH.slot
               (Proxy ∷ _ "userList")
               unit
@@ -218,7 +226,7 @@ render state = HH.div
   renderLoading =
     HH.text "Loading..."
 
-  renderConversationPanel users now posts draft =
+  renderConversationPanel sessionId lastTimeTyped users now posts draft =
     HH.div
       [ classes [ Just "flex", Just "flex-col", Just "h-full" ] ]
       [ HH.div
@@ -228,18 +236,27 @@ render state = HH.div
               , Just "h-5/6"
               , Just "overflow-x-hidden"
               , Just "overflow-y-scroll"
+              , Just "p-1"
               ]
           ]
           ( ( Array.fromFoldable
                 $ HH.fromPlainHTML
                     <$> renderPosts
+                      sessionId
                       users
                       now
                       posts
-            ) <> [ HH.div [ HP.ref conversationBottomRefLabel ] [] ]
+            ) <>
+              [ HH.fromPlainHTML
+                  $ renderConversationPanelBottom
+                      sessionId
+                      now
+                      users
+                      lastTimeTyped
+              ]
           )
       , HH.div
-          [ classes [ Just "border", Just "h-1/6" ] ]
+          [ classes [ Just "border", Just "h-1/6", Just "m-1" ] ]
           [ HH.textarea
               [ classes
                   [ Just "bg-slate-800", Just "h-full", Just "w-full" ]
@@ -251,15 +268,70 @@ render state = HH.div
           ]
       ]
 
-renderPosts ∷ Users → Instant → List Post → List PlainHTML
-renderPosts users now = map case _ of
-  Message messagePayload →
-    renderMessage users now messagePayload
-  Notification notificationPayload →
-    renderNotification users now notificationPayload
+renderConversationPanelBottom
+  ∷ NonEmptyString → Instant → Users → LastTimeTyped → PlainHTML
+renderConversationPanelBottom currentSessionId now users lastTimeTyped =
+  HH.div
+    [ classes
+        [ Just "flex"
+        , Just "flex-column"
+        , Just "italic"
+        , Just "py-1"
+        , Just "text-slate-500"
+        , Just "text-xs"
+        ]
+    ]
+    [ HH.div_
+        [ renderText
+            currentSessionId
+            users
+            ( let
+                typingUsers = lastTimeTyped # foldMapWithIndex
+                  \sessionId timestamp →
+                    if
+                      sessionId == currentSessionId
+                        || Timestamp.secondsAgo now timestamp > 2 then
+                      Nil
+                    else List.singleton sessionId
+              in
+                Text $ List.fromFoldable case typingUsers of
+                  Nil →
+                    []
 
-renderMessage ∷ Users → Instant → MessagePayload → PlainHTML
-renderMessage users now { author, text, timestamp } =
+                  nes : Nil →
+                    [ UserReference nes
+                    , PlainText
+                        $ NEString.nes (Proxy ∷ _ " is typing...")
+                    ]
+
+                  ss →
+                    ( Array.intersperse
+                        (PlainText $ NEString.nes (Proxy ∷ _ ", "))
+                        (UserReference <$> Array.fromFoldable ss)
+                    )
+                      <>
+                        [ PlainText $ NEString.nes
+                            (Proxy ∷ _ " are typing...")
+
+                        ]
+            )
+        ]
+    , HH.div
+        [ HP.ref conversationBottomRefLabel, classes [ Just "h-4" ] ]
+        []
+    ]
+
+renderPosts
+  ∷ NonEmptyString → Users → Instant → List Post → List PlainHTML
+renderPosts sessionId users now = map case _ of
+  Message messagePayload →
+    renderMessage sessionId users now messagePayload
+  Notification notificationPayload →
+    renderNotification sessionId users now notificationPayload
+
+renderMessage
+  ∷ NonEmptyString → Users → Instant → MessagePayload → PlainHTML
+renderMessage sessionId users now { author, text, timestamp } =
   HH.div
     [ classes
         [ Just "flex", Just "flex-col", Just "p-1" ]
@@ -277,12 +349,11 @@ renderMessage users now { author, text, timestamp } =
                 , Just "mr-1"
                 ]
             ]
-            [ HH.text case Map.lookup author users of
-                Just (User { name }) →
-                  name
-
-                Nothing →
-                  NEString.toString author
+            [ renderText
+                sessionId
+                users
+                $ Text
+                $ List.fromFoldable [ UserReference author ]
             ]
         , HH.p
             [ classes
@@ -292,12 +363,12 @@ renderMessage users now { author, text, timestamp } =
         ]
     , HH.p
         [ classes [ Just "ml-1" ] ]
-        [ renderText users text ]
+        [ renderText sessionId users text ]
     ]
 
 renderNotification
-  ∷ Users → Instant → NotificationPayload → PlainHTML
-renderNotification users now { text, timestamp } =
+  ∷ NonEmptyString → Users → Instant → NotificationPayload → PlainHTML
+renderNotification sessionId users now { text, timestamp } =
   HH.div
     [ classes
         [ Just "flex"
@@ -315,11 +386,11 @@ renderNotification users now { text, timestamp } =
         ]
     , HH.p
         [ classes [ Just "ml-1" ] ]
-        [ renderText users text ]
+        [ renderText sessionId users text ]
     ]
 
-renderText ∷ Users → Text → PlainHTML
-renderText users (Text textSegments) =
+renderText ∷ NonEmptyString → Users → Text → PlainHTML
+renderText currentSessionId users (Text textSegments) =
   HH.p
     [ classes [ Just "whitespace-pre-wrap" ] ]
     (Array.fromFoldable $ renderTextSegment <$> textSegments)
@@ -335,16 +406,22 @@ renderText users (Text textSegments) =
     PlainText nes →
       HH.span_ [ HH.text $ NEString.toString nes ]
 
-    UserReference nes → case Map.lookup nes users of
-      Just (User { name }) →
-        HH.span
-          [ classes [ Just "text-blue-500" ] ]
-          [ HH.text name ]
+    UserReference nes →
+      case Map.lookup nes users of
+        Just (User { name }) →
+          HH.span
+            [ classes
+                [ if nes == currentSessionId then Just "font-semibold"
+                  else Nothing
+                , Just "text-sky-500"
+                ]
+            ]
+            [ HH.text name ]
 
-      Nothing →
-        HH.span
-          [ classes [ Just "text-slate-500" ] ]
-          [ HH.text $ NEString.toString nes ]
+        Nothing →
+          HH.span
+            [ classes [ Just "text-slate-500" ] ]
+            [ HH.text $ NEString.toString nes ]
 
 handleAction
   ∷ ∀ o m. MonadAff m ⇒ Action → H.HalogenM State Action Slots o m Unit
@@ -361,8 +438,10 @@ handleAction = case _ of
               if String.null userName then pure unit
               else do
                 liftAff
-                  $ Room.send session.room "changeName"
-                  $ A.fromString userNameDraft
+                  $ Room.send
+                      session.room
+                      (NEString.nes (Proxy ∷ _ "change-my-name"))
+                      (A.fromString userNameDraft)
 
                 put $ SetUp joinedState
 
@@ -375,8 +454,10 @@ handleAction = case _ of
                 if String.null message then pure unit
                 else do
                   liftAff
-                    $ Room.send session.room "postMessage"
-                    $ A.fromString draft
+                    $ Room.send
+                        session.room
+                        (NEString.nes (Proxy ∷ _ "post-my-message"))
+                        (A.fromString draft)
 
                   put $ SetUp joinedState { draft = "" }
 
@@ -437,6 +518,11 @@ handleAction = case _ of
             liftAff
               $ Room.addStateChangeListener room
               $ HS.notify listener <<< ReceiveRoomStateUpdate
+            liftAff
+              $ Room.addMessageListener
+                  room
+                  (NEString.nes (Proxy ∷ _ "is-typing"))
+              $ HS.notify listener <<< ReceiveRoomMessage IsTyping
             void $ liftAff $ forkAff $ forever do
               delay $ Milliseconds 1000.0
               ins ← liftEffect now
@@ -450,14 +536,50 @@ handleAction = case _ of
             put $ Joined
               ""
               { chatRoom: ChatRoomState
-                  { maxUsers: 0, posts: Nil, users: Map.empty }
+                  { maxUsers: 0
+                  , posts: Nil
+                  , users: Map.empty
+                  }
               , draft: ""
+              , lastTimeTyped: Map.empty
               , now: Nothing
               , session: { id: Room.getSessionId room, room }
               }
       _ → pure unit
 
-  ReceiveMessage _ → pure unit
+  ReceiveRoomMessage IsTyping messagePayload → do
+    case AD.decodeJson messagePayload of
+      Left decodeError →
+        liftEffect $ Console.error $
+          "Could not decode the chat room message: "
+            <> AD.printJsonDecodeError decodeError
+
+      Right
+        ( { sessionId, timestamp }
+            ∷ { sessionId ∷ NonEmptyString, timestamp ∷ Timestamp }
+        ) → do
+        let
+          updateJoinedState joinedState =
+            joinedState
+              { lastTimeTyped = Map.insert
+                  sessionId
+                  timestamp
+                  joinedState.lastTimeTyped
+              }
+
+        state ← get
+
+        case state of
+          Joined userNameDraft joinedState →
+            put $ Joined userNameDraft $ updateJoinedState joinedState
+
+          SetUp joinedState →
+            put $ SetUp $ updateJoinedState joinedState
+
+          _ →
+            pure unit
+
+        scrollConversationWindowToBottom
 
   ReceiveRoomStateUpdate roomState →
     case AD.decodeJson $ Schema.toJson roomState of
@@ -466,26 +588,24 @@ handleAction = case _ of
           "Could not decode the chat room state: "
             <> AD.printJsonDecodeError decodeError
 
-      Right (chatRoom ∷ ChatRoomState) →
-        do
-          liftEffect $ Console.info $ show chatRoom
-          let
-            updateJoinedState joinedState =
-              joinedState { chatRoom = chatRoom }
+      Right (chatRoom ∷ ChatRoomState) → do
+        let
+          updateJoinedState joinedState =
+            joinedState { chatRoom = chatRoom }
 
-          state ← get
+        state ← get
 
-          case state of
-            Joined userNameDraft joinedState →
-              put $ Joined userNameDraft $ updateJoinedState joinedState
+        case state of
+          Joined userNameDraft joinedState →
+            put $ Joined userNameDraft $ updateJoinedState joinedState
 
-            SetUp joinedState →
-              put $ SetUp $ updateJoinedState joinedState
+          SetUp joinedState →
+            put $ SetUp $ updateJoinedState joinedState
 
-            _ →
-              pure unit
+          _ →
+            pure unit
 
-          scrollConversationWindowToBottom
+        scrollConversationWindowToBottom
 
   UpdateCurrentTime ins → do
     let
@@ -510,8 +630,14 @@ handleAction = case _ of
       Joined _ joinedState →
         put $ Joined s joinedState
 
-      SetUp joinedState →
+      SetUp joinedState → do
         put $ SetUp joinedState { draft = s }
+
+        liftAff
+          $ Room.send
+              joinedState.session.room
+              (NEString.nes (Proxy ∷ _ "i-am-typing"))
+              A.jsonNull
 
       _ →
         pure unit

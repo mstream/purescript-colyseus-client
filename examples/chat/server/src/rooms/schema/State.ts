@@ -12,6 +12,9 @@ export class Post extends Schema {
   }
 }
 
+export type Posts = ArraySchema<Post>
+export type Users = MapSchema<User>
+
 export class Notification extends Post {
   constructor({text}: {text:string}) {
     super({tag: 'notification', text})
@@ -37,7 +40,7 @@ export class User extends Schema {
   }
 }
 
-export class ChatRoomState extends Schema {
+export class State extends Schema {
   @type('number') maxUsers = 0
   @type([Post]) posts = new ArraySchema<Post>()
   @type({map: User}) users = new MapSchema<User>()

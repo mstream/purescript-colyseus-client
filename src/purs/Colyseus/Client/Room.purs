@@ -24,9 +24,14 @@ import Partial.Unsafe (unsafePartial)
 
 type State = Schema
 
-addMessageListener ∷ Room → String → (Json → Effect Unit) → Aff Unit
+addMessageListener
+  ∷ Room → NonEmptyString → (Json → Effect Unit) → Aff Unit
 addMessageListener room messageName listener =
-  toAffE $ runFn3 addMessageListenerImpl room messageName listener
+  toAffE $ runFn3
+    addMessageListenerImpl
+    room
+    (NEString.toString messageName)
+    listener
 
 addStateChangeListener ∷ Room → (State → Effect Unit) → Aff Unit
 addStateChangeListener room listener =
@@ -49,9 +54,9 @@ leave = toAffE <<< runFn1 leaveImpl
 requestState ∷ Room → Aff State
 requestState = toAffE <<< runFn1 requestStateImpl
 
-send ∷ Room → String → Json → Aff Unit
+send ∷ Room → NonEmptyString → Json → Aff Unit
 send room messageName message =
-  toAffE $ runFn3 sendImpl room messageName message
+  toAffE $ runFn3 sendImpl room (NEString.toString messageName) message
 
 foreign import data Room ∷ Type
 

@@ -1,4 +1,4 @@
-module Data.Timestamp (Timestamp, ago) where
+module Data.Timestamp (Timestamp, ago, secondsAgo) where
 
 import Prelude
 
