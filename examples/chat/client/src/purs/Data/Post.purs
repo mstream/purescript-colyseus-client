@@ -27,6 +27,8 @@ data Post
 
 derive instance Generic Post _
 
+derive instance Eq Post
+
 instance Show Post where
   show = genericShow
 

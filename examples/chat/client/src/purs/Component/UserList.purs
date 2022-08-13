@@ -4,27 +4,38 @@ import Prelude
 
 import Control.Monad.State (put)
 import Data.Array as Array
+import Data.DateTime.Instant (Instant)
 import Data.FunctorWithIndex (mapWithIndex)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), isNothing)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String.NonEmpty (NonEmptyString)
+import Data.Timestamp (Timestamp)
 import Data.User (User(..))
 import Effect.Aff.Class (class MonadAff)
+import Halogen (Component, ComponentHTML, HalogenM)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Utils (classes)
+import Utils (classes, isUserTyping)
+
+type ComponentMonad m a = HalogenM State Action () Output m a
 
 type State = Input
 
 type Input =
-  { maxUsers ∷ Int, sessionId ∷ NonEmptyString, users ∷ Users }
+  { lastTimeTyped ∷ LastTimeTyped
+  , maxUsers ∷ Int
+  , now ∷ Instant
+  , sessionId ∷ NonEmptyString
+  , users ∷ Users
+  }
+
+type LastTimeTyped = Map NonEmptyString Timestamp
+type Users = Map NonEmptyString User
 
 data Output = NameEditRequested | UserMentioned NonEmptyString
-
-type Users = Map NonEmptyString User
 
 data Action
   = EditName
@@ -32,7 +43,7 @@ data Action
   | MentionUser NonEmptyString
   | Receive Input
 
-component ∷ ∀ q m. MonadAff m ⇒ H.Component q Input Output m
+component ∷ ∀ q m. MonadAff m ⇒ Component q Input Output m
 component =
   H.mkComponent
     { initialState
@@ -47,35 +58,33 @@ component =
 initialState ∷ Input → State
 initialState = identity
 
-render ∷ ∀ m. State → H.ComponentHTML Action () m
+render ∷ ∀ m. State → ComponentHTML Action () m
 render state =
-  let
-    activeUsers =
-      state.users # Map.filter \(User { leftAt }) → isNothing leftAt
-  in
-    HH.div
-      [ classes [ Just "flex", Just "flex-col" ] ]
-      [ HH.h2_
-          [ HH.text
-              $ "Users ("
-                  <> (show $ Map.size activeUsers)
-                  <> "/"
-                  <> show state.maxUsers
-                  <> ")"
-          ]
-      , HH.div
-          [ classes [ Just "flex", Just "flex-col" ] ]
-          ( Array.fromFoldable
-              $ renderUsers state.sessionId activeUsers
-          )
-      ]
+  HH.div
+    [ classes [ Just "flex", Just "flex-col" ] ]
+    [ HH.h2_
+        [ HH.text
+            $ "Users ("
+                <> (show $ Map.size state.users)
+                <> "/"
+                <> show state.maxUsers
+                <> ")"
+        ]
+    , HH.div
+        [ classes [ Just "flex", Just "flex-col" ] ]
+        ( Array.fromFoldable
+            $ Map.values
+            $ renderUser `mapWithIndex` state.users
+        )
+    ]
   where
-  renderUsers sessionId users =
-    Map.values $ renderUser sessionId `mapWithIndex` users
-
-  renderUser currentSessionId sessionId (User { name }) =
+  renderUser sessionId (User { name }) =
     let
-      isOwn = sessionId == currentSessionId
+      isOwn = sessionId == state.sessionId
+
+      isTyping = fromMaybe false
+        $ isUserTyping state.now
+            <$> Map.lookup sessionId state.lastTimeTyped
     in
       HH.div
         [ classes
@@ -95,6 +104,9 @@ render state =
               $ const
               $ MentionUser sessionId
         , HH.text name
+        , HH.span
+            [ classes [ Just "mx-1", Just "text-slate-500" ] ]
+            [ HH.text if isTyping && not isOwn then "⌨" else "" ]
         ]
 
   renderButton description label handler =
@@ -131,14 +143,16 @@ render state =
           [ HH.text label ]
       ]
 
-handleAction
-  ∷ ∀ m. MonadAff m ⇒ Action → H.HalogenM State Action () Output m Unit
+handleAction ∷ ∀ m. MonadAff m ⇒ Action → ComponentMonad m Unit
 handleAction = case _ of
   EditName →
     H.raise NameEditRequested
+
   Initialize →
     pure unit
+
   MentionUser sessionId →
     H.raise $ UserMentioned sessionId
+
   Receive input →
     put input
