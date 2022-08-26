@@ -2,71 +2,78 @@ module Test.Spec.Colyseus.Client (spec) where
 
 import Prelude
 
-import Colyseus.Client (getAvailableRooms, joinOrCreate, makeClient)
+import Colyseus.Client (Client, JoinError(..))
+import Colyseus.Client as Client
+import Colyseus.Client.Room (Room)
 import Colyseus.Client.Room as Room
-import Control.Monad.Error.Class (throwError)
+import Colyseus.Schema as Schema
+import Control.Monad.Error.Class (class MonadThrow, throwError)
+import Control.Monad.Except (runExceptT)
 import Data.Argonaut.Core as A
+import Data.Either (Either(..))
+import Data.Either.Nested (type (\/))
+import Data.Int as Int
 import Data.List as List
 import Data.Maybe (Maybe(..))
-import Data.String as String
+import Data.String.NonEmpty as NEString
 import Data.Time.Duration (Milliseconds(..))
 import Data.Tuple.Nested ((/\))
 import Effect.Aff (Aff, delay)
 import Effect.Class (liftEffect)
-import Effect.Class.Console (info)
-import Effect.Exception (error)
+import Effect.Exception (Error, error)
 import Effect.Ref as Ref
 import Foreign.Object as Object
 import Test.Spec (SpecT, afterAll_, beforeAll_, describe, it)
-import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
+import Test.Spec.Assertions (fail, shouldEqual)
 import Test.Utils (startColyseusServer, stopColyseusServer)
+import Type.Proxy (Proxy(..))
 
 spec ∷ SpecT Aff Unit Aff Unit
 spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
   describe "Colyseus.Client" do
     let
       endpoint = "ws://localhost:2567"
-      client1 = makeClient { endpoint }
-      client2 = makeClient { endpoint }
-      defaultOptions = A.jsonEmptyObject
+      client1 = Client.makeClient { endpoint }
+      client2 = Client.makeClient { endpoint }
 
-    it "can connect to a server" do
-      let
-        roomName = "test1"
-        options = defaultOptions
+    describe "joining a room" do
+      it "fails when room is not defined" do
+        roomResult ← joinRoom client1 "not-defined"
 
-      room ← joinOrCreate client1 { options, roomName }
+        case roomResult of
+          Left joinError →
+            joinError `shouldEqual` RoomNotDefined
 
-      Room.getId room `shouldSatisfy` \roomId →
-        String.length roomId > 0
-
-      Room.getSessionId room `shouldSatisfy` \sessionId →
-        String.length sessionId > 0
+          Right _ →
+            fail "should fail to join"
 
     describe "listing available rooms" do
       let
         roomName = "test2"
-        options = A.fromObject $ Object.fromFoldable
-          [ "maxPlayers" /\ A.fromNumber 2.0 ]
+        options = { maxPlayers: 2, pingEnabled: false }
 
-      roomRef ← liftEffect $ Ref.new Nothing
+      roomRef ← liftEffect $ Ref.new (Nothing ∷ Maybe Room)
 
       it "returns 0 when no room instances are present" do
-        getAvailableRooms client1 { roomName } >>= \availableRooms →
-          List.length availableRooms `shouldEqual` 0
+        Client.getAvailableRooms client1 { roomName } >>=
+          \availableRooms →
+            List.length availableRooms `shouldEqual` 0
 
       it "returns 1 after creation of one room" do
-        void $ joinOrCreate client1 { options, roomName }
+        void $ joinOrCreateRoom client1 roomName options
 
-        getAvailableRooms client1 { roomName } >>= \availableRooms →
-          List.length availableRooms `shouldEqual` 1
+        Client.getAvailableRooms client1 { roomName } >>=
+          \availableRooms →
+            List.length availableRooms `shouldEqual` 1
 
       it "returns 0 when the only room gets full" do
-        room ← joinOrCreate client2 { options, roomName }
+        room ← liftEither $ joinOrCreateRoom client2 roomName options
+
         liftEffect $ Ref.write (Just room) roomRef
 
-        getAvailableRooms client1 { roomName } >>= \availableRooms →
-          List.length availableRooms `shouldEqual` 0
+        Client.getAvailableRooms client1 { roomName } >>=
+          \availableRooms →
+            List.length availableRooms `shouldEqual` 0
 
       it "returns 1 when the room cases to be full" do
         mbRoom ← liftEffect $ Ref.read roomRef
@@ -75,8 +82,9 @@ spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
           Just room → do
             Room.leave room
 
-            getAvailableRooms client1 { roomName } >>= \availableRooms →
-              List.length availableRooms `shouldEqual` 1
+            Client.getAvailableRooms client1 { roomName } >>=
+              \availableRooms →
+                List.length availableRooms `shouldEqual` 1
 
           Nothing →
             throwError $ error "room of client2 not set"
@@ -84,13 +92,14 @@ spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
     it "can add a message listener" do
       let
         roomName = "test3"
-        options = A.fromObject $ Object.fromFoldable
-          [ "pingEnabled" /\ A.fromBoolean true ]
+        options = { maxPlayers: 1, pingEnabled: true }
+        messageName = NEString.nes (Proxy ∷ _ "ping")
 
       messageRef ← liftEffect $ Ref.new Nothing
-      room ← joinOrCreate client1 { options, roomName }
 
-      Room.addMessageListener room "ping" \msg →
+      room ← liftEither $ joinOrCreateRoom client1 roomName options
+
+      Room.addMessageListener room messageName \msg →
         Ref.write (Just msg) messageRef
 
       delay $ Milliseconds 2000.0
@@ -102,12 +111,12 @@ spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
     it "can request a state" do
       let
         roomName = "test4"
-        options = defaultOptions
+        options = { maxPlayers: 1, pingEnabled: false }
 
-      room ← joinOrCreate client1 { options, roomName }
+      room ← liftEither $ joinOrCreateRoom client1 roomName options
       state ← Room.requestState room
 
-      A.stringify state `shouldEqual`
+      A.stringify (Schema.toJson state) `shouldEqual`
         ( A.stringify $ A.fromObject $ Object.fromFoldable
             [ "number" /\ A.fromNumber 0.0
             , "string" /\ A.fromString ""
@@ -118,25 +127,61 @@ spec = beforeAll_ startColyseusServer $ afterAll_ stopColyseusServer do
     it "can send a message" do
       let
         roomName = "test5"
-        options = defaultOptions
+        options = { maxPlayers: 1, pingEnabled: false }
+        messageName = NEString.nes (Proxy ∷ _ "test")
 
       stateRef ← liftEffect $ Ref.new Nothing
 
-      room ← joinOrCreate client1 { options, roomName }
+      room ← liftEither $ joinOrCreateRoom client1 roomName options
 
       Room.addStateChangeListener room \state →
         Ref.write (Just state) stateRef
 
-      Room.send room "test" $ A.fromString "message1"
+      Room.send room messageName $ A.fromString "message1"
 
       delay $ Milliseconds 200.0
 
       mbState ← liftEffect $ Ref.read stateRef
 
-      (A.stringify <$> mbState) `shouldEqual`
+      (A.stringify <<< Schema.toJson <$> mbState) `shouldEqual`
         ( Just $ A.stringify $ A.fromObject $ Object.fromFoldable
             [ "number" /\ A.fromNumber 0.0
             , "string" /\ A.fromString ""
             , "messages" /\ A.fromArray [ A.fromString "message1" ]
             ]
         )
+
+joinRoom
+  ∷ Client
+  → String
+  → Aff (JoinError \/ Room)
+joinRoom client roomName = runExceptT
+  $ Client.join
+      client
+      { roomName
+      , options: A.jsonEmptyObject
+      }
+
+liftEither ∷ ∀ a m. MonadThrow Error m ⇒ m (String \/ a) → m a
+liftEither computation = computation >>= case _ of
+  Left errorMsg →
+    throwError $ error errorMsg
+
+  Right value →
+    pure value
+
+joinOrCreateRoom
+  ∷ Client
+  → String
+  → { maxPlayers ∷ Int, pingEnabled ∷ Boolean }
+  → Aff (String \/ Room)
+joinOrCreateRoom client roomName opts = runExceptT
+  $ Client.joinOrCreate
+      client
+      { roomName
+      , options: A.fromObject $ Object.fromFoldable
+          [ "maxPlayers" /\ A.fromNumber
+              (Int.toNumber opts.maxPlayers)
+          , "pingEnabled" /\ A.fromBoolean opts.pingEnabled
+          ]
+      }

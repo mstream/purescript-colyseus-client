@@ -43,7 +43,7 @@ import Data.User (User(..))
 import Effect.Aff (Aff, delay, forkAff)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
-import Effect.Console as Console
+import Effect.Class.Console as Console
 import Effect.Now (now)
 import Foreign.Object (Object)
 import Halogen (Component, ComponentHTML, HalogenM, Slot)
@@ -51,16 +51,11 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Halogen.Query.Event (eventListener)
 import Halogen.Subscription as HS
 import Type.Proxy (Proxy(..))
 import Utils (classes, getHostname, getProtocol)
-import Web.HTML (window)
-import Web.HTML.HTMLDocument (toEventTarget)
-import Web.HTML.Window (document)
 import Web.UIEvent.KeyboardEvent (KeyboardEvent)
 import Web.UIEvent.KeyboardEvent as KE
-import Web.UIEvent.KeyboardEvent.EventTypes as KET
 
 type ComponentMonad m a = ∀ q. HalogenM State Action Slots q m a
 
@@ -181,6 +176,7 @@ render state = HH.div
           , HP.autofocus true
           , HP.placeholder "Enter your name here..."
           , HP.value userNameDraft
+          , HE.onKeyDown HandleKey
           , HE.onValueInput UpdateDraft
           ]
       ]
@@ -255,7 +251,7 @@ render state = HH.div
               }
           ]
       , HH.div
-          [ classes [ Just "border", Just "h-1/6", Just "m-1" ] ]
+          [ classes [ Just "h-1/6", Just "m-1" ] ]
           [ HH.slot
               inputBoxPrx
               unit
@@ -333,7 +329,7 @@ handleAction = case _ of
               { chatRoom: (ChatRoomState chatRoomState), session } →
             put $ Joined
               ( fromMaybe ""
-                  $ map (\(User { name }) → name)
+                  $ map (\(User { name }) → NEString.toString name)
                   $ Map.lookup session.id chatRoomState.users
               )
               joinedState
@@ -362,6 +358,9 @@ handleAction = case _ of
           Left _ →
             put $ FailedToJoin "unexpected error"
 
+          Right (Left RoomNotDefined) →
+            put $ FailedToJoin "room not found"
+
           Right (Left RoomNotFound) →
             put $ FailedToJoin "room not found"
 
@@ -383,11 +382,6 @@ handleAction = case _ of
               ins ← liftEffect now
               liftEffect $ HS.notify listener $ UpdateCurrentTime ins
             void $ H.subscribe emitter
-            doc ← H.liftEffect $ document =<< window
-            void $ H.subscribe $ eventListener
-              KET.keyup
-              (toEventTarget doc)
-              (map HandleKey <<< KE.fromEvent)
             put $ Joined
               ""
               { chatRoom: ChatRoomState
@@ -404,7 +398,7 @@ handleAction = case _ of
   ReceiveRoomMessage IsTyping messagePayload → do
     case AD.decodeJson messagePayload of
       Left decodeError →
-        liftEffect $ Console.error $
+        Console.error $
           "Could not decode the chat room message: "
             <> AD.printJsonDecodeError decodeError
 
@@ -436,7 +430,7 @@ handleAction = case _ of
   ReceiveRoomStateUpdate roomState →
     case AD.decodeJson $ Schema.toJson roomState of
       Left decodeError →
-        liftEffect $ Console.error $
+        Console.error $
           "Could not decode the chat room state: "
             <> AD.printJsonDecodeError decodeError
 

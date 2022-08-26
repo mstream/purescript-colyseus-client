@@ -17,7 +17,7 @@ main = launchAff_ $ runSpec' testConfig [ consoleReporter ]
   where
   testConfig ∷ Config
   testConfig =
-    { exit: false
+    { exit: true
     , slow: Milliseconds slowTimeLimitInMs
     , timeout: Just $ Milliseconds $ slowTimeLimitInMs * 5.0
     }

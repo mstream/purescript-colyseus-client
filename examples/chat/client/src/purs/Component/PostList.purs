@@ -11,6 +11,7 @@ import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Post (MessagePayload, NotificationPayload, Post(..))
+import Data.String as String
 import Data.String.NonEmpty (NonEmptyString)
 import Data.String.NonEmpty as NEString
 import Data.Text (Text(..), TextSegment(..))
@@ -18,8 +19,6 @@ import Data.Timestamp as Timestamp
 import Data.User (User(..))
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
-import Effect.Console as Console
-import Halogen (Component, ComponentHTML, HalogenM)
 import Halogen (Component, ComponentHTML, HalogenM, RefLabel(..))
 import Halogen as H
 import Halogen.HTML (PlainHTML)
@@ -329,7 +328,7 @@ renderText currentSessionId users (Text textSegments) =
       HH.span_
         [ HH.text $ fromMaybe
             (":" <> NEString.toString nes)
-            (Map.lookup nes emojis)
+            (String.singleton <$> Map.lookup nes emojis)
         ]
 
     PlainText nes →
@@ -345,7 +344,7 @@ renderText currentSessionId users (Text textSegments) =
                 , Just "text-sky-500"
                 ]
             ]
-            [ HH.text name ]
+            [ HH.text $ NEString.toString name ]
 
         Nothing →
           HH.span
@@ -391,7 +390,6 @@ updateScrollInfo = do
 
   case mbEl of
     Just el → do
-      liftEffect $ Console.info "element found"
       scrollInfo ← liftAff $ getScrollInfo el
       modify_ \state → state { scrollInfo = Just scrollInfo }
 

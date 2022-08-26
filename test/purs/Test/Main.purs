@@ -10,9 +10,9 @@ import Test.Spec.Colyseus.Client (spec)
 import Test.Spec.Reporter (consoleReporter)
 import Test.Spec.Runner (runSpecT)
 
-main :: Effect Unit
+main ∷ Effect Unit
 main = launchAff_ do
-  resultAff <- runSpecT config [ consoleReporter ] do
+  resultAff ← runSpecT config [ consoleReporter ] do
     spec
   void resultAff
   where

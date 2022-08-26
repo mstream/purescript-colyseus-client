@@ -17,7 +17,8 @@ import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
 import Data.Show.Generic (genericShow)
 import Data.String.NonEmpty (NonEmptyString)
-import Data.Text (Text, text)
+import Data.Text (Text)
+import Data.Text as Text
 import Data.Timestamp (Timestamp)
 import StringParser as SP
 
@@ -44,7 +45,7 @@ instance DecodeJson Post where
     rawText ← obj .: "text"
     tag ← obj .: "tag"
     timestamp ← obj .: "timestamp"
-    case SP.runParser text rawText of
+    case SP.runParser (Text.text) rawText of
       Left parserError →
         Left $ TypeMismatch $ SP.printParserError parserError
       Right text →

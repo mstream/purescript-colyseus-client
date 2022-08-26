@@ -10,10 +10,12 @@ export class OnPostMessageMessageCommand extends Command<ChatRoom, Params> {
   execute({ maxPosts, sessionId, text }: Params) {
     const {posts} = this.state
 
-    addPost({
-        maxPosts, 
-        post: new Message({author: sessionId, text}),
-        posts,
-    })
+    if (text.trim().length > 0) {
+      addPost({
+          maxPosts, 
+          post: new Message({author: sessionId, text}),
+          posts,
+      })
+    }
   }
 }

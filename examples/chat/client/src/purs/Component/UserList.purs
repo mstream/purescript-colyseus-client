@@ -10,6 +10,7 @@ import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String.NonEmpty (NonEmptyString)
+import Data.String.NonEmpty as NEString
 import Data.Timestamp (Timestamp)
 import Data.User (User(..))
 import Effect.Aff.Class (class MonadAff)
@@ -103,7 +104,7 @@ render state =
             renderButton "mention user" "@"
               $ const
               $ MentionUser sessionId
-        , HH.text name
+        , HH.text $ NEString.toString name
         , HH.span
             [ classes [ Just "mx-1", Just "text-slate-500" ] ]
             [ HH.text if isTyping && not isOwn then "⌨" else "" ]

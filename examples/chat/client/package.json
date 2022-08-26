@@ -1,0 +1,23 @@
+{
+  "author": "Maciej Laciak",
+  "private": true,
+  "name": "chat-client",
+  "version": "1.0.0",
+  "description": "chat client",
+  "scripts": {
+    "build": "npm run test && spago build",
+    "bundle": "npm run esbuild -- --minify && npm run build && npm run css",
+    "css": "npm run css:tailwind",
+    "css:tailwind": "tailwindcss --config tailwind.config.cjs --input src/css/styles.css --output static/index.generated.css",
+    "esbuild": "esbuild --bundle --outfile=static/index.generated.js src/js/index.js",
+    "serve": "npm run css && npm run build && npm run esbuild -- --servedir=static",
+    "test": "spago test"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "~0.15",
+    "tailwindcss": "^3"
+  },
+  "dependencies": {
+  }
+}

@@ -1,7 +1,9 @@
 module Utils
   ( ScrollInfo
   , classes
+  , eraseContent
   , getHostname
+  , getInnerText
   , getProtocol
   , getScrollInfo
   , isUserTyping
@@ -19,7 +21,7 @@ import Data.Timestamp (Timestamp)
 import Data.Timestamp as Timestamp
 import Effect (Effect)
 import Effect.Aff (Aff)
-import Effect.Class (liftEffect)
+import Effect.Class (class MonadEffect, liftEffect)
 import Halogen (ClassName(..))
 import Halogen.HTML (IProp)
 import Halogen.HTML.Properties as HP
@@ -44,6 +46,16 @@ type ScrollInfo =
   , scrollHeight ∷ Number
   , scrollTop ∷ Number
   }
+
+eraseContent ∷ ∀ m. MonadEffect m ⇒ Element → m Unit
+eraseContent = liftEffect <<< runFn1 eraseContentImpl
+
+foreign import eraseContentImpl ∷ Fn1 Element (Effect Unit)
+
+getInnerText ∷ ∀ m. MonadEffect m ⇒ Element → m String
+getInnerText = liftEffect <<< runFn1 getInnerTextImpl
+
+foreign import getInnerTextImpl ∷ Fn1 Element (Effect String)
 
 getScrollInfo ∷ HTMLElement → Aff ScrollInfo
 getScrollInfo htmlElement = liftEffect do

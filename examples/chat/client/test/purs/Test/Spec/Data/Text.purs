@@ -14,7 +14,7 @@ import Test.Spec.Assertions (shouldEqual)
 
 spec ∷ Spec Unit
 spec = describe "Data.Text" do
-  describe "textSegment" do
+  describe "text" do
     it "parses an empty string" do
       let
         actual = runParser text ""
@@ -27,6 +27,20 @@ spec = describe "Data.Text" do
         expected =
           Right $ Text $ List.fromFoldable
             [ PlainText $ unsafeNonEmptyString "abc" ]
+      actual `shouldEqual` expected
+    it "interprets a single colon as a plain text" do
+      let
+        actual = runParser text ":"
+        expected =
+          Right $ Text $ List.fromFoldable
+            [ PlainText $ unsafeNonEmptyString ":" ]
+      actual `shouldEqual` expected
+    it "interprets a single address sign as a plain text" do
+      let
+        actual = runParser text "@"
+        expected =
+          Right $ Text $ List.fromFoldable
+            [ PlainText $ unsafeNonEmptyString "@" ]
       actual `shouldEqual` expected
     it "parses a single user reference segment" do
       let
