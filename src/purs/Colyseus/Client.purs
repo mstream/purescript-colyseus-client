@@ -18,7 +18,7 @@ import Data.Argonaut.Core (Json)
 import Data.Either (Either(..))
 import Data.Function.Uncurried (Fn1, Fn2, runFn1, runFn2)
 import Data.Generic.Rep (class Generic)
-import Data.List (List, Pattern)
+import Data.List (List)
 import Data.List as List
 import Data.Show.Generic (genericShow)
 import Data.String (Pattern(..))
