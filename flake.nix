@@ -1,40 +1,71 @@
 {
-  description = "Colyseus.js wrapper";
+  description = "Redis UI";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-22.05";
-    easy-purescript-nix = {
-      url = "github:justinwoo/easy-purescript-nix";
-      flake = false;
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
+    purescript-overlay = {
+      url = "github:thomashoneyman/purescript-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, easy-purescript-nix, flake-utils, nixpkgs, ... }@inputs:
+  outputs =
+    {
+      nixpkgs,
+      flake-utils,
+      purescript-overlay,
+      ...
+    }:
     let
-      name = "colyseus-client";
+      projectName = "diagrams";
+    in
+    flake-utils.lib.eachSystem
+      [ "x86_64-linux" "x86_64-darwin" "aarch64-darwin" ]
+      (
+        system:
+        let
+          name = projectName;
+          lib = nixpkgs.lib;
 
-      supportedSystems = [
-        "aarch64-darwin"
-        "x86_64-darwin"
-        "x86_64-linux"
-      ];
+          overlays = [ purescript-overlay.overlays.default ];
 
-    in flake-utils.lib.eachSystem supportedSystems (system:
-      let 
-        pkgs = import nixpkgs { inherit system; };
-        easy-ps = import easy-purescript-nix { inherit pkgs; };
-      in
-        {
-          devShell = pkgs.mkShell {
-            inherit name; 
-            buildInputs = with pkgs; [ git nodejs nodePackages.typescript ] 
-              ++ (with easy-ps; [ purs spago ]);
-             
-            shellHook = ''
-              PS1="\[\e[33m\][\[\e[m\]\[\e[34;40m\]${name}:\[\e[m\]\[\e[36m\]\w\[\e[m\]\[\e[33m\]]\[\e[m\]\[\e[32m\]\\$\[\e[m\] "
-            '';
+          pkgs = import nixpkgs {
+            inherit system overlays;
           };
+
+          shellModule = import ./nix/devShell.nix {
+            inherit
+              pkgs
+              name
+              lib
+              system
+              ;
+          };
+
+        in
+        {
+          inherit projectName;
+
+          legacyPackages = pkgs;
+
+          devShell = shellModule.devShell;
         }
-    );
+      );
+
+  nixConfig = {
+    extra-experimental-features = [ "nix-command flakes" ];
+    extra-substituters = [
+      "https://cache.iog.io"
+      "https://cache.zw3rk.com"
+      "https://cache.nixos.org"
+      "https://hercules-ci.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
+      "loony-tools:pr9m4BkM/5/eSTZlkQyRt57Jz7OMBxNSUiMC4FkcNfk="
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+      "hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0="
+    ];
+  };
 }

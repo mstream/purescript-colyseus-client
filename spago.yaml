@@ -1,0 +1,40 @@
+package:
+  build:
+    pedanticPackages: true
+    strict: true
+  dependencies:
+    - aff
+    - aff-promise
+    - argonaut-core
+    - effect
+    - either
+    - exceptions
+    - functions
+    - lists
+    - partial
+    - prelude
+    - strings
+    - transformers
+  name: colyseus-client
+  test:
+    dependencies:
+      - console
+      - datetime
+      - foreign-object
+      - integers
+      - maybe
+      - monad-loops
+      - node-buffer
+      - node-child-process
+      - node-event-emitter
+      - node-streams
+      - refs
+      - spec
+      - spec-node
+      - tuples
+    main: Test.Main
+    pedanticPackages: true
+    strict: true
+workspace:
+  packageSet:
+    registry: 65.1.0

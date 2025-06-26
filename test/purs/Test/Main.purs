@@ -5,22 +5,25 @@ import Prelude
 import Data.Maybe (Maybe(..))
 import Data.Time.Duration (Milliseconds(..))
 import Effect (Effect)
-import Effect.Aff (launchAff_)
 import Test.Spec.Colyseus.Client (spec)
 import Test.Spec.Reporter (consoleReporter)
-import Test.Spec.Runner (runSpecT)
+import Test.Spec.Runner.Node (runSpecAndExitProcess')
+import Test.Spec.Runner.Node.Config (TestRunConfig,defaultConfig)
 
 main ∷ Effect Unit
-main = launchAff_ do
-  resultAff ← runSpecT config [ consoleReporter ] do
-    spec
-  void resultAff
+main = runSpecAndExitProcess' 
+  {defaultConfig : testConfig, parseCLIOptions: true } 
+  [ consoleReporter ] 
+  spec
   where
-  config =
-    { exit: true
-    , slow: Milliseconds slowTimeLimitInMs
-    , timeout: Just $ Milliseconds $ slowTimeLimitInMs * 10.0
-    }
+  testConfig :: TestRunConfig
+  testConfig =
+    defaultConfig 
+      { failFast= false
+      , filter = Nothing
+      , onlyFailures= false
+      , timeout= Just $ Milliseconds $ slowTimeLimitInMs * 5.0
+      }
 
   slowTimeLimitInMs ∷ Number
   slowTimeLimitInMs = 1000.0

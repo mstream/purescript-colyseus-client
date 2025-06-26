@@ -4,6 +4,7 @@ import Prelude
 
 import Control.Monad.Error.Class (try)
 import Control.Monad.Loops (untilM_)
+import Data.Maybe (Maybe(..))
 import Data.String (Pattern(..))
 import Data.String as String
 import Data.Time.Duration (Milliseconds(..))
@@ -12,8 +13,9 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Ref as Ref
 import Node.Buffer as Buffer
-import Node.ChildProcess as ChildProcess
+import Node.ChildProcess as CP
 import Node.Encoding (Encoding(..))
+import Node.EventEmitter (on_)
 import Node.Stream as Stream
 
 startColyseusServer ∷ Aff Unit
@@ -32,9 +34,7 @@ stopColyseusServer =
 exec ∷ String → Aff Unit
 exec command = liftEffect do
   Console.info command
-  stdout ← ChildProcess.execSync
-    command
-    ChildProcess.defaultExecSyncOptions
+  stdout ← CP.execSync command
   Console.info =<< Buffer.toString UTF8 stdout
 
 execInTheBackground ∷ String → String → Array String → (String -> Boolean) -> Aff Unit
@@ -59,23 +59,28 @@ execInTheBackground name command arguments readyPredicate = do
           <> commandString
           <> "\n---\n"
 
-    childProcess ← ChildProcess.spawn
+    childProcess ← CP.spawn'
       command
       arguments
-      (ChildProcess.defaultSpawnOptions { detached = true })
+      (_ {detached = Just true})
 
-    ChildProcess.onExit childProcess \exit →
-      printInfo $
+    childProcess # on_ CP.exitH \exit → printInfo $
         "child process ("
           <> commandString
           <> ") exited: "
           <> show exit
 
-    Stream.onDataString (ChildProcess.stdout childProcess) UTF8 \s -> do
+    let 
+      stdout = CP.stdout childProcess
+
+    Stream.setEncoding stdout UTF8
+
+    stdout # on_ Stream.dataHStr \s -> do
       printInfo s
       if (readyPredicate s) then Ref.write true ref else pure unit
 
-    Stream.onData
-      (ChildProcess.stderr childProcess)
-      (Buffer.toString UTF8 >=> printError)
+    let 
+      stderr = CP.stderr childProcess
+    
+    stderr # on_ Stream.dataH (Buffer.toString UTF8 >=> printError)
 
